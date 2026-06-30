@@ -8,6 +8,7 @@ Setup:
   copy config.example.ini to config.ini
   python extract_enamad.py --init-db
   python extract_enamad.py --pages 2
+  python extract_enamad.py --all
 """
 
 from __future__ import annotations
@@ -372,6 +373,23 @@ def save_captcha_image(image_bytes: bytes, page: int, attempt: int, debug_dir: P
     return img_path
 
 
+def cleanup_captcha_images() -> None:
+    removed = 0
+    for directory in (SCRIPT_DIR / "captcha_tmp", SCRIPT_DIR / "debug_captcha"):
+        if not directory.is_dir():
+            continue
+        for path in directory.iterdir():
+            if path.is_file():
+                path.unlink(missing_ok=True)
+                removed += 1
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
+    if removed:
+        print(f"Removed {removed} captcha image(s).")
+
+
 def fetch_page(
     client: EnamadClient,
     page: int,
@@ -450,10 +468,15 @@ def parse_args() -> argparse.Namespace:
         help="Create database and tables from schema.sql",
     )
     parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Fetch all pages until the end of the list",
+    )
+    parser.add_argument(
         "--pages",
         type=int,
-        default=1,
-        help="Number of pages to fetch (default: 1)",
+        default=None,
+        help="Number of pages to fetch (default: 1, ignored with --all)",
     )
     parser.add_argument(
         "--start-page",
@@ -503,9 +526,13 @@ def main() -> int:
     delay = args.delay if args.delay is not None else app_config.scraper.delay
     retries = args.retries if args.retries is not None else app_config.scraper.retries
 
-    if args.pages < 1:
-        print("Page count must be at least 1.", file=sys.stderr)
-        return 1
+    if args.all:
+        pages_to_fetch = 0
+    else:
+        pages_to_fetch = args.pages if args.pages is not None else 1
+        if pages_to_fetch < 1:
+            print("Page count must be at least 1.", file=sys.stderr)
+            return 1
 
     debug_dir = SCRIPT_DIR / "debug_captcha" if args.debug else None
 
@@ -518,25 +545,40 @@ def main() -> int:
         print("OCR ready.")
 
     client = EnamadClient()
-    end_page = args.start_page + args.pages - 1
+    end_page = None if args.all else args.start_page + pages_to_fetch - 1
     total_saved = 0
     pages_fetched = 0
     run_id: int | None = None
+    total_pages_api: int | None = None
 
-    print(f"Scraping pages {args.start_page} to {end_page} -> MySQL ({app_config.mysql.database})")
+    if args.all:
+        print(f"Scraping ALL pages from {args.start_page} -> MySQL ({app_config.mysql.database})")
+    else:
+        print(f"Scraping pages {args.start_page} to {end_page} -> MySQL ({app_config.mysql.database})")
+
+    page = args.start_page
 
     try:
         with mysql_connection(app_config.mysql) as conn:
             run_id = start_scrape_run(
                 conn,
                 start_page=args.start_page,
-                pages_requested=args.pages,
-                notes="manual" if args.manual else "ddddocr",
+                pages_requested=pages_to_fetch,
+                notes="all pages" if args.all else ("manual" if args.manual else "ddddocr"),
             )
 
-            for page in range(args.start_page, end_page + 1):
-                print(f"Page {page}...")
-                rows, total_pages = fetch_page(
+            while True:
+                if total_pages_api is not None and page > total_pages_api:
+                    break
+                if not args.all and end_page is not None and page > end_page:
+                    break
+
+                label = f"Page {page}"
+                if total_pages_api:
+                    label += f" / {total_pages_api}"
+                print(f"{label}...")
+
+                rows, total_pages_api = fetch_page(
                     client,
                     page,
                     ocr,
@@ -549,12 +591,15 @@ def main() -> int:
                 pages_fetched += 1
                 print(f"  -> {len(rows)} records saved (total: {total_saved})")
 
-                if total_pages is not None and page >= total_pages:
-                    print(f"Reached last available page ({total_pages}).")
+                if total_pages_api is not None and page >= total_pages_api:
+                    print(f"Reached last available page ({total_pages_api}).")
                     break
 
-                if page < end_page:
-                    time.sleep(max(0.0, delay))
+                if not args.all and end_page is not None and page >= end_page:
+                    break
+
+                page += 1
+                time.sleep(max(0.0, delay))
 
             finish_scrape_run(
                 conn,
@@ -578,6 +623,8 @@ def main() -> int:
             except Exception:
                 pass
         raise
+    finally:
+        cleanup_captcha_images()
 
     print(f"Done. {total_saved} records stored in MySQL (run_id={run_id}).")
     return 0

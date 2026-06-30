@@ -103,6 +103,20 @@ python extract_enamad.py --pages 1
 python extract_enamad.py --pages 10
 ```
 
+### Scrape **all** pages (full database)
+
+```bash
+python extract_enamad.py --all
+```
+
+This runs until the last page reported by enamad.ir. It can take a long time (one captcha per page).
+
+Resume from a specific page:
+
+```bash
+python extract_enamad.py --all --start-page 50
+```
+
 ### Start from a specific page
 
 ```bash
@@ -134,7 +148,8 @@ python extract_enamad.py --config D:\path\to\config.ini --pages 5
 | Option | Description |
 |--------|-------------|
 | `--init-db` | Create database and tables, then exit |
-| `--pages N` | Number of pages to fetch (default: 1) |
+| `--all` | Fetch every page until the end |
+| `--pages N` | Number of pages to fetch (default: 1, ignored with `--all`) |
 | `--start-page N` | First page number (default: 1) |
 | `--delay SEC` | Pause between pages (overrides config) |
 | `--retries N` | Max captcha attempts per page (overrides config) |
