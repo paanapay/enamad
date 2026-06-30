@@ -35,8 +35,7 @@ from PIL import Image, ImageEnhance, ImageOps
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-CAPTCHA_MIN_LEN = 4
-CAPTCHA_MAX_LEN = 6
+CAPTCHA_LEN = 5  # اینماد تقریباً همیشه ۵ کاراکتر
 
 BASE_URL = "https://enamad.ir/"
 PAGE_SIZE = 30
@@ -80,8 +79,21 @@ class CaptchaOcr:
         return re.sub(r"[^a-zA-Z0-9]", "", text or "").strip()
 
     @staticmethod
+    def _extract_five_char_slices(code: str) -> list[str]:
+        if len(code) == CAPTCHA_LEN:
+            return [code]
+        if len(code) < CAPTCHA_LEN:
+            return []
+        slices: list[str] = []
+        for start in range(0, len(code) - CAPTCHA_LEN + 1):
+            part = code[start : start + CAPTCHA_LEN]
+            if part not in slices:
+                slices.append(part)
+        return slices
+
+    @staticmethod
     def _is_plausible(code: str) -> bool:
-        return CAPTCHA_MIN_LEN <= len(code) <= CAPTCHA_MAX_LEN
+        return len(code) == CAPTCHA_LEN
 
     @staticmethod
     def _to_bytes(image: Image.Image) -> bytes:
@@ -96,36 +108,87 @@ class CaptchaOcr:
             raise RuntimeError("encode تصویر کپچا ناموفق بود.")
         return encoded.tobytes()
 
-    def _preprocess_variants(self, image_bytes: bytes) -> list[bytes]:
-        variants: list[bytes] = [image_bytes]
-        base = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    @staticmethod
+    def _focus_crops(base: Image.Image) -> list[Image.Image]:
+        """برش نواحی اصلی؛ حذف واترمارک پایین و متن گمراه‌کننده راست."""
         width, height = base.size
+        return [
+            # بدون پایین (واترمارک) و بدون راست (متن اضافی)
+            base.crop((0, 0, int(width * 0.70), int(height * 0.65))),
+            # ناحیه مرکزی
+            base.crop((
+                int(width * 0.05),
+                int(height * 0.05),
+                int(width * 0.68),
+                int(height * 0.62),
+            )),
+            # سمت چپ-بالا (متن اصلی معمولاً اینجاست)
+            base.crop((0, 0, int(width * 0.62), int(height * 0.58))),
+        ]
 
-        scales = (2, 3)
-        for scale in scales:
-            big = base.resize((width * scale, height * scale), Image.Resampling.LANCZOS)
-            variants.append(self._to_bytes(big))
+    @staticmethod
+    def _remove_small_components(gray: np.ndarray) -> np.ndarray:
+        """حذف نوشته‌های ریز (واترمارک پایین و کنار)."""
+        inverted = cv2.bitwise_not(gray)
+        _, binary = cv2.threshold(inverted, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
 
-        cropped = base.crop((0, 0, width, int(height * 0.72)))
-        variants.append(self._to_bytes(cropped.resize((width * 3, int(height * 0.72 * 3)), Image.Resampling.LANCZOS)))
+        if num_labels <= 1:
+            return gray
 
-        gray = ImageOps.grayscale(base)
-        gray = ImageEnhance.Contrast(gray).enhance(2.5)
-        gray = gray.point(lambda px: 255 if px > 145 else 0)
-        variants.append(self._to_bytes(gray.resize((width * 3, height * 3), Image.Resampling.NEAREST)))
+        areas = stats[1:, cv2.CC_STAT_AREA]
+        heights = stats[1:, cv2.CC_STAT_HEIGHT]
+        max_area = int(areas.max()) if len(areas) else 0
+        max_height = int(heights.max()) if len(heights) else 0
 
-        arr = np.array(base)
+        mask = np.zeros_like(gray)
+        for label in range(1, num_labels):
+            area = stats[label, cv2.CC_STAT_AREA]
+            height = stats[label, cv2.CC_STAT_HEIGHT]
+            if area >= max(25, max_area * 0.18) and height >= max(8, max_height * 0.45):
+                mask[labels == label] = 255
+
+        if mask.max() == 0:
+            return gray
+        return cv2.bitwise_not(mask)
+
+    def _enhance_crop(self, crop: Image.Image, scale: int = 3) -> list[bytes]:
+        outputs: list[bytes] = []
+        width, height = crop.size
+        big = crop.resize((width * scale, height * scale), Image.Resampling.LANCZOS)
+        outputs.append(self._to_bytes(big))
+
+        gray = ImageOps.grayscale(big)
+        gray = ImageEnhance.Contrast(gray).enhance(2.8)
+        gray = gray.point(lambda px: 255 if px > 140 else 0)
+        outputs.append(self._to_bytes(gray))
+
+        arr = np.array(big.convert("RGB"))
         cv_gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
-        cv_gray = cv2.resize(cv_gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-        _, otsu = cv2.threshold(cv_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        variants.append(self._to_bytes_cv(otsu))
+        cleaned = self._remove_small_components(cv_gray)
+        outputs.append(self._to_bytes_cv(cleaned))
+        _, otsu = cv2.threshold(cleaned, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        outputs.append(self._to_bytes_cv(otsu))
+        return outputs
 
-        adaptive = cv2.adaptiveThreshold(
-            cv_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 8
-        )
-        variants.append(self._to_bytes_cv(adaptive))
+    def _preprocess_variants(self, image_bytes: bytes) -> list[tuple[bytes, int]]:
+        """(bytes, weight) — وزن بیشتر = برش دقیق‌تر روی متن اصلی."""
+        weighted: list[tuple[bytes, int]] = []
+        base = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-        return variants
+        for crop in self._focus_crops(base):
+            for variant in self._enhance_crop(crop, scale=3):
+                weighted.append((variant, 4))
+
+        for crop in self._focus_crops(base):
+            for variant in self._enhance_crop(crop, scale=2):
+                weighted.append((variant, 3))
+
+        width, height = base.size
+        bottom_cut = base.crop((0, 0, width, int(height * 0.72)))
+        weighted.append((self._to_bytes(bottom_cut.resize((width * 3, int(height * 0.72 * 3)), Image.Resampling.LANCZOS)), 1))
+
+        return weighted
 
     def read(self, image_bytes: bytes) -> str:
         candidates = self.read_candidates(image_bytes)
@@ -134,33 +197,31 @@ class CaptchaOcr:
     def read_candidates(self, image_bytes: bytes) -> list[str]:
         votes: Counter[str] = Counter()
 
-        for variant in self._preprocess_variants(image_bytes):
+        for variant, weight in self._preprocess_variants(image_bytes):
             raw = CaptchaOcr._engine.classification(variant)
             code = self._sanitize(raw)
-            if not self._is_plausible(code):
-                continue
-            votes[code] += 2
-            votes[code.lower()] += 1
-            votes[code.upper()] += 1
+            for guess in self._extract_five_char_slices(code):
+                if not self._is_plausible(guess):
+                    continue
+                votes[guess.lower()] += weight * 3
+                votes[guess] += weight * 2
+                votes[guess.upper()] += weight
 
         if not votes:
             return []
 
-        ranked = sorted(votes.items(), key=lambda item: (-item[1], -len(item[0])))
+        ranked = sorted(votes.items(), key=lambda item: (-item[1], item[0]))
         ordered: list[str] = []
         for code, _score in ranked:
-            for variant in (code.lower(), code, code.upper()):
-                if self._is_plausible(variant) and variant not in ordered:
-                    ordered.append(variant)
-        return ordered
+            if code not in ordered:
+                ordered.append(code)
+        return ordered[:10]
 
 
 def captcha_submit_variants(code: str) -> list[str]:
-    ordered: list[str] = []
-    for variant in (code.lower(), code, code.upper()):
-        if CAPTCHA_MIN_LEN <= len(variant) <= CAPTCHA_MAX_LEN and variant not in ordered:
-            ordered.append(variant)
-    return ordered
+    if len(code) != CAPTCHA_LEN:
+        return []
+    return [code.lower()]
 
 
 def resolve_ca_bundle() -> str | bool:
