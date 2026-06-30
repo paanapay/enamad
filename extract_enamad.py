@@ -1,25 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-استخراج فهرست دارندگان اینماد
-هر صفحه نیاز به کپچای جدید دارد — با ddddocr خودکار حل می‌شود.
+Enamad domain list scraper.
+Stores results in MySQL. Each page requires a fresh captcha (auto OCR via ddddocr).
 
-نصب:
-  C:\\laragon\\bin\\python\\python-3.13\\python.exe -m pip install -r requirements.txt
-
-اجرا:
+Setup:
+  copy config.example.ini to config.ini
+  python extract_enamad.py --init-db
   python extract_enamad.py --pages 2
-  python extract_enamad.py --pages 5 --output domains.csv
-  python extract_enamad.py --pages 2 --manual
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
-import csv
 import io
-import json
 import os
 import re
 import sys
@@ -34,6 +29,15 @@ import requests
 from PIL import Image, ImageEnhance, ImageOps
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+from db import (
+    finish_scrape_run,
+    init_database,
+    load_config,
+    mysql_connection,
+    save_domains,
+    start_scrape_run,
+)
 
 CAPTCHA_LEN = 5  # اینماد تقریباً همیشه ۵ کاراکتر
 
@@ -337,7 +341,7 @@ def needs_captcha(message: str) -> bool:
     return any(k in message or k in lower for k in keywords)
 
 
-def normalize_row(item: dict, row_number: int) -> dict:
+def normalize_row(item: dict, row_number: int, page: int) -> dict:
     domain_id = item.get("id", "")
     code = item.get("code", "")
     trustseal = ""
@@ -345,9 +349,8 @@ def normalize_row(item: dict, row_number: int) -> dict:
         trustseal = f"https://trustseal.enamad.ir/?id={domain_id}&code={code}"
 
     return {
-        "row": row_number,
-        "id": domain_id,
-        "code": code,
+        "enamad_id": str(domain_id),
+        "code": str(code),
         "domain": item.get("domain_address", ""),
         "business_name": item.get("persian_name", "") or "",
         "province": item.get("province", "") or "",
@@ -356,6 +359,8 @@ def normalize_row(item: dict, row_number: int) -> dict:
         "approve_date": item.get("approve_date", "") or "",
         "expire_date": item.get("expire_date", "") or "",
         "trustseal_url": trustseal,
+        "source_page": page,
+        "source_row": row_number,
     }
 
 
@@ -416,7 +421,7 @@ def fetch_page(
                     domains = result.get("applicantDomainsList") or []
                     total_pages = max(1, int(result.get("page", 1)))
                     rows = [
-                        normalize_row(item, ((page - 1) * PAGE_SIZE) + index + 1)
+                        normalize_row(item, ((page - 1) * PAGE_SIZE) + index + 1, page)
                         for index, item in enumerate(domains)
                     ]
                     return rows, total_pages
@@ -432,130 +437,149 @@ def fetch_page(
     raise RuntimeError(f"صفحه {page} بعد از {max_retries} تلاش ناموفق: {last_error}")
 
 
-def save_csv(rows: list[dict], path: Path) -> None:
-    if not rows:
-        raise RuntimeError("داده‌ای برای ذخیره نیست.")
-    fieldnames = list(rows[0].keys())
-    with path.open("w", encoding="utf-8-sig", newline="") as fp:
-        writer = csv.DictWriter(fp, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-def save_json(rows: list[dict], path: Path) -> None:
-    path.write_text(
-        json.dumps(rows, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-
-
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="استخراج فهرست دارندگان اینماد")
+    parser = argparse.ArgumentParser(description="Scrape Enamad domain holders into MySQL")
+    parser.add_argument(
+        "--config",
+        default="config.ini",
+        help="Path to config.ini (default: config.ini)",
+    )
+    parser.add_argument(
+        "--init-db",
+        action="store_true",
+        help="Create database and tables from schema.sql",
+    )
     parser.add_argument(
         "--pages",
         type=int,
         default=1,
-        help="تعداد صفحه برای دریافت (پیش‌فرض: 1)",
+        help="Number of pages to fetch (default: 1)",
     )
     parser.add_argument(
         "--start-page",
         type=int,
         default=1,
-        help="شروع از صفحه N (پیش‌فرض: 1)",
-    )
-    parser.add_argument(
-        "--output",
-        default="enamad_domains.csv",
-        help="فایل خروجی",
-    )
-    parser.add_argument(
-        "--format",
-        choices=("csv", "json"),
-        default="csv",
-        help="فرمت خروجی",
+        help="Start from page N (default: 1)",
     )
     parser.add_argument(
         "--delay",
         type=float,
-        default=1.0,
-        help="تأخیر بین صفحات (ثانیه)",
+        default=None,
+        help="Delay between pages in seconds (overrides config.ini)",
     )
     parser.add_argument(
         "--retries",
         type=int,
-        default=5,
-        help="حداکثر تلاش کپچای جدید برای هر صفحه (پیش‌فرض: 5)",
+        default=None,
+        help="Max captcha retries per page (overrides config.ini)",
     )
     parser.add_argument(
         "--manual",
         action="store_true",
-        help="ورود دستی کپچا به‌جای OCR",
+        help="Enter captcha manually instead of OCR",
     )
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="ذخیره تصاویر کپچا در پوشه debug_captcha",
+        help="Save captcha images to debug_captcha/",
     )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = SCRIPT_DIR / config_path
+
+    if args.init_db:
+        app_config = load_config(config_path)
+        print("Initializing database...")
+        init_database(app_config.mysql)
+        print(f"Database ready: {app_config.mysql.database}")
+        return 0
+
+    app_config = load_config(config_path)
+    delay = args.delay if args.delay is not None else app_config.scraper.delay
+    retries = args.retries if args.retries is not None else app_config.scraper.retries
+
     if args.pages < 1:
-        print("تعداد صفحات باید حداقل 1 باشد.", file=sys.stderr)
+        print("Page count must be at least 1.", file=sys.stderr)
         return 1
-
-    output_path = Path(args.output)
-    if not output_path.is_absolute():
-        output_path = SCRIPT_DIR / output_path
-
-    if args.format == "json" and output_path.suffix.lower() != ".json":
-        output_path = output_path.with_suffix(".json")
 
     debug_dir = SCRIPT_DIR / "debug_captcha" if args.debug else None
 
     if args.manual:
         ocr = None
-        print("حالت دستی: کپچا را خودتان وارد می‌کنید.")
+        print("Manual captcha mode.")
     else:
-        print("در حال بارگذاری OCR (ddddocr)...")
+        print("Loading OCR (ddddocr)...")
         ocr = CaptchaOcr()
-        print("OCR آماده است.")
+        print("OCR ready.")
 
     client = EnamadClient()
-
-    all_rows: list[dict] = []
-    total_pages = None
     end_page = args.start_page + args.pages - 1
+    total_saved = 0
+    pages_fetched = 0
+    run_id: int | None = None
 
-    print(f"شروع استخراج: صفحه {args.start_page} تا {end_page}")
+    print(f"Scraping pages {args.start_page} to {end_page} -> MySQL ({app_config.mysql.database})")
 
-    for page in range(args.start_page, end_page + 1):
-        print(f"صفحه {page}...")
-        rows, total_pages = fetch_page(
-            client,
-            page,
-            ocr,
-            args.manual,
-            args.retries,
-            debug_dir,
-        )
-        all_rows.extend(rows)
-        print(f"  → {len(rows)} رکورد (جمع: {len(all_rows)})")
+    try:
+        with mysql_connection(app_config.mysql) as conn:
+            run_id = start_scrape_run(
+                conn,
+                start_page=args.start_page,
+                pages_requested=args.pages,
+                notes="manual" if args.manual else "ddddocr",
+            )
 
-        if total_pages is not None and page >= total_pages:
-            print(f"به آخرین صفحه ({total_pages}) رسیدیم.")
-            break
+            for page in range(args.start_page, end_page + 1):
+                print(f"Page {page}...")
+                rows, total_pages = fetch_page(
+                    client,
+                    page,
+                    ocr,
+                    args.manual,
+                    retries,
+                    debug_dir,
+                )
+                saved = save_domains(conn, rows, scrape_run_id=run_id)
+                total_saved += saved
+                pages_fetched += 1
+                print(f"  -> {len(rows)} records saved (total: {total_saved})")
 
-        if page < end_page:
-            time.sleep(max(0.0, args.delay))
+                if total_pages is not None and page >= total_pages:
+                    print(f"Reached last available page ({total_pages}).")
+                    break
 
-    if args.format == "json":
-        save_json(all_rows, output_path)
-    else:
-        save_csv(all_rows, output_path)
+                if page < end_page:
+                    time.sleep(max(0.0, delay))
 
-    print(f"انجام شد. {len(all_rows)} رکورد در {output_path} ذخیره شد.")
+            finish_scrape_run(
+                conn,
+                run_id=run_id,
+                pages_fetched=pages_fetched,
+                records_saved=total_saved,
+                status="completed",
+            )
+    except Exception as exc:
+        if run_id is not None:
+            try:
+                with mysql_connection(app_config.mysql) as conn:
+                    finish_scrape_run(
+                        conn,
+                        run_id=run_id,
+                        pages_fetched=pages_fetched,
+                        records_saved=total_saved,
+                        status="failed",
+                        notes=str(exc),
+                    )
+            except Exception:
+                pass
+        raise
+
+    print(f"Done. {total_saved} records stored in MySQL (run_id={run_id}).")
     return 0
 
 

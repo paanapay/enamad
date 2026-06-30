@@ -1,0 +1,29 @@
+# Local config (copy from config.example.ini)
+config.ini
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+
+# Runtime / scraped artifacts
+enamad_cookies.txt
+cookies.txt
+*.csv
+*.json
+captcha_tmp/
+debug_captcha/
+captcha.jpg
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Legacy files
+*.php
+page.html
