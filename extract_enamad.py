@@ -32,6 +32,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from db import (
+    commit_connection,
     finish_scrape_run,
     get_scrape_state,
     init_database,
@@ -564,6 +565,7 @@ def main() -> int:
             if args.all:
                 if args.reset:
                     reset_scrape_state(conn)
+                    commit_connection(conn)
                     print("Progress reset. Starting from page 1.")
                     start_page = args.start_page or 1
                 elif args.start_page is not None:
@@ -606,6 +608,7 @@ def main() -> int:
                 pages_requested=pages_to_fetch,
                 notes="all pages" if args.all else ("manual" if args.manual else "ddddocr"),
             )
+            commit_connection(conn)
 
             while True:
                 if total_pages_api is not None and page > total_pages_api:
@@ -629,10 +632,12 @@ def main() -> int:
                 saved = save_domains(conn, rows, scrape_run_id=run_id)
                 total_saved += saved
                 pages_fetched += 1
-                print(f"  -> {len(rows)} records saved (total: {total_saved})")
 
                 if args.all:
                     update_scrape_progress(conn, page, total_pages_api)
+
+                commit_connection(conn)
+                print(f"  -> {len(rows)} records saved (total: {total_saved}, committed)")
 
                 if total_pages_api is not None and page >= total_pages_api:
                     print(f"Reached last available page ({total_pages_api}).")

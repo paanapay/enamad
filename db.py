@@ -86,6 +86,10 @@ def mysql_connection(cfg: MySQLConfig, database: str | None = None) -> Iterator[
         conn.close()
 
 
+def commit_connection(conn) -> None:
+    conn.commit()
+
+
 def init_database(cfg: MySQLConfig) -> None:
     if not SCHEMA_PATH.is_file():
         raise FileNotFoundError(f"Schema file not found: {SCHEMA_PATH}")
