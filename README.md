@@ -109,12 +109,32 @@ python extract_enamad.py --pages 10
 python extract_enamad.py --all
 ```
 
-This runs until the last page reported by enamad.ir. It can take a long time (one captcha per page).
+Runs until the last page. Progress is saved in MySQL after each page.
 
-Resume from a specific page:
+**Resume** after interrupt (Ctrl+C) or crash — run the same command again:
+
+```bash
+python extract_enamad.py --all
+```
+
+It continues from the next page automatically.
+
+**Start over** from page 1:
+
+```bash
+python extract_enamad.py --all --reset
+```
+
+**Force a specific page** (ignores saved progress):
 
 ```bash
 python extract_enamad.py --all --start-page 50
+```
+
+Check saved progress in MySQL:
+
+```sql
+SELECT * FROM scraper_state;
 ```
 
 ### Start from a specific page
@@ -148,9 +168,10 @@ python extract_enamad.py --config D:\path\to\config.ini --pages 5
 | Option | Description |
 |--------|-------------|
 | `--init-db` | Create database and tables, then exit |
-| `--all` | Fetch every page until the end |
+| `--all` | Fetch every page until the end (auto-resume) |
+| `--reset` | Clear saved progress and start from page 1 (with `--all`) |
 | `--pages N` | Number of pages to fetch (default: 1, ignored with `--all`) |
-| `--start-page N` | First page number (default: 1) |
+| `--start-page N` | Start from page N (overrides auto-resume) |
 | `--delay SEC` | Pause between pages (overrides config) |
 | `--retries N` | Max captcha attempts per page (overrides config) |
 | `--manual` | Type captcha manually |

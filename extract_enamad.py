@@ -33,11 +33,14 @@ from urllib3.util.retry import Retry
 
 from db import (
     finish_scrape_run,
+    get_scrape_state,
     init_database,
     load_config,
     mysql_connection,
+    reset_scrape_state,
     save_domains,
     start_scrape_run,
+    update_scrape_progress,
 )
 
 CAPTCHA_LEN = 5  # اینماد تقریباً همیشه ۵ کاراکتر
@@ -481,8 +484,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--start-page",
         type=int,
-        default=1,
-        help="Start from page N (default: 1)",
+        default=None,
+        help="Start from page N (overrides auto-resume)",
     )
     parser.add_argument(
         "--delay",
@@ -500,6 +503,11 @@ def parse_args() -> argparse.Namespace:
         "--manual",
         action="store_true",
         help="Enter captcha manually instead of OCR",
+    )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="With --all: clear saved progress and start from page 1",
     )
     parser.add_argument(
         "--debug",
@@ -545,24 +553,56 @@ def main() -> int:
         print("OCR ready.")
 
     client = EnamadClient()
-    end_page = None if args.all else args.start_page + pages_to_fetch - 1
     total_saved = 0
     pages_fetched = 0
     run_id: int | None = None
     total_pages_api: int | None = None
-
-    if args.all:
-        print(f"Scraping ALL pages from {args.start_page} -> MySQL ({app_config.mysql.database})")
-    else:
-        print(f"Scraping pages {args.start_page} to {end_page} -> MySQL ({app_config.mysql.database})")
-
-    page = args.start_page
+    start_page = args.start_page or 1
 
     try:
         with mysql_connection(app_config.mysql) as conn:
+            if args.all:
+                if args.reset:
+                    reset_scrape_state(conn)
+                    print("Progress reset. Starting from page 1.")
+                    start_page = args.start_page or 1
+                elif args.start_page is not None:
+                    start_page = args.start_page
+                    print(f"Starting from page {start_page} (--start-page).")
+                else:
+                    state = get_scrape_state(conn)
+                    last_done = state.get("last_completed_page", 0)
+                    total_known = state.get("total_pages")
+                    if last_done > 0 and total_known and last_done >= total_known:
+                        print(
+                            f"Already complete ({last_done}/{total_known} pages). "
+                            "Use --reset to scrape from the beginning."
+                        )
+                        return 0
+                    if last_done > 0:
+                        start_page = last_done + 1
+                        total_pages_api = total_known
+                        print(
+                            f"Resuming from page {start_page} "
+                            f"(last completed: {last_done}"
+                            f"{f' / {total_known}' if total_known else ''})."
+                        )
+                    else:
+                        start_page = 1
+                        print("No saved progress. Starting from page 1.")
+
+            end_page = None if args.all else start_page + pages_to_fetch - 1
+
+            if args.all:
+                print(f"Scraping ALL pages from {start_page} -> MySQL ({app_config.mysql.database})")
+            else:
+                print(f"Scraping pages {start_page} to {end_page} -> MySQL ({app_config.mysql.database})")
+
+            page = start_page
+
             run_id = start_scrape_run(
                 conn,
-                start_page=args.start_page,
+                start_page=start_page,
                 pages_requested=pages_to_fetch,
                 notes="all pages" if args.all else ("manual" if args.manual else "ddddocr"),
             )
@@ -590,6 +630,9 @@ def main() -> int:
                 total_saved += saved
                 pages_fetched += 1
                 print(f"  -> {len(rows)} records saved (total: {total_saved})")
+
+                if args.all:
+                    update_scrape_progress(conn, page, total_pages_api)
 
                 if total_pages_api is not None and page >= total_pages_api:
                     print(f"Reached last available page ({total_pages_api}).")

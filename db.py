@@ -196,3 +196,58 @@ def save_domains(conn, rows: list[dict], scrape_run_id: int | None = None) -> in
         cursor.executemany(sql, payload)
 
     return len(payload)
+
+
+STATE_LAST_PAGE = "last_completed_page"
+STATE_TOTAL_PAGES = "total_pages"
+
+
+def get_scrape_state(conn) -> dict[str, int]:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "SELECT state_key, state_value FROM scraper_state "
+            "WHERE state_key IN (%s, %s)",
+            (STATE_LAST_PAGE, STATE_TOTAL_PAGES),
+        )
+        rows = cursor.fetchall()
+
+    state: dict[str, int] = {}
+    for row in rows:
+        try:
+            state[row["state_key"]] = int(row["state_value"])
+        except (TypeError, ValueError):
+            continue
+    return state
+
+
+def update_scrape_progress(conn, last_completed_page: int, total_pages: int | None) -> None:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO scraper_state (state_key, state_value)
+            VALUES (%s, %s)
+            ON DUPLICATE KEY UPDATE
+                state_value = VALUES(state_value),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (STATE_LAST_PAGE, str(last_completed_page)),
+        )
+        if total_pages is not None:
+            cursor.execute(
+                """
+                INSERT INTO scraper_state (state_key, state_value)
+                VALUES (%s, %s)
+                ON DUPLICATE KEY UPDATE
+                    state_value = VALUES(state_value),
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (STATE_TOTAL_PAGES, str(total_pages)),
+            )
+
+
+def reset_scrape_state(conn) -> None:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "DELETE FROM scraper_state WHERE state_key IN (%s, %s)",
+            (STATE_LAST_PAGE, STATE_TOTAL_PAGES),
+        )
