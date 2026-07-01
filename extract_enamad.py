@@ -35,6 +35,7 @@ from PIL import Image, ImageEnhance, ImageOps
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from captcha_learn import CaptchaLearner
 from db import (
     commit_connection,
     finish_scrape_run,
@@ -54,6 +55,7 @@ BASE_URL = "https://enamad.ir/"
 TRUSTSEAL_URL = "https://trustseal.enamad.ir/"
 PAGE_SIZE = 30
 SCRIPT_DIR = Path(__file__).resolve().parent
+CAPTCHA_LEARN_PATH = SCRIPT_DIR / "captcha_learn.json"
 
 
 def configure_console_encoding() -> None:
@@ -228,7 +230,11 @@ class CaptchaOcr:
         candidates = self.read_candidates(image_bytes)
         return candidates[0] if candidates else ""
 
-    def read_candidates(self, image_bytes: bytes) -> list[str]:
+    def read_candidates(
+        self,
+        image_bytes: bytes,
+        learner: CaptchaLearner | None = None,
+    ) -> list[str]:
         votes: Counter[str] = Counter()
 
         for variant, weight in self._preprocess_variants(image_bytes):
@@ -249,7 +255,12 @@ class CaptchaOcr:
         for code, _score in ranked:
             if code not in ordered:
                 ordered.append(code)
-        return ordered[:10]
+        ordered = ordered[:10]
+
+        if learner is not None and learner.enabled:
+            ordered = learner.expand_candidates(ordered, image_bytes)
+
+        return ordered[:15]
 
 
 def captcha_submit_variants(code: str) -> list[str]:
@@ -766,12 +777,14 @@ def fetch_page(
     manual: bool,
     max_retries: int,
     debug_dir: Path | None,
+    learner: CaptchaLearner | None = None,
 ) -> tuple[list[dict], int]:
     last_error = "خطای نامشخص"
 
     for attempt in range(1, max_retries + 1):
         token, image_bytes = client.refresh_captcha()
         img_path = save_captcha_image(image_bytes, page, attempt, debug_dir)
+        failed_this_image: list[str] = []
 
         if manual:
             print(f"  تصویر کپچا: {img_path}")
@@ -780,15 +793,24 @@ def fetch_page(
             if not sys.stdin.isatty():
                 raise RuntimeError("حالت manual فقط در ترمینال کار می‌کند.")
             guesses = [input("  کد کپچا را وارد کنید: ").strip()]
+            ocr_guesses: list[str] = []
         elif ocr is None:
             raise RuntimeError("OCR فعال نیست.")
         else:
-            guesses = ocr.read_candidates(image_bytes)
+            ocr_guesses = ocr.read_candidates(image_bytes, learner=learner)
+            guesses = ocr_guesses
             if guesses:
                 preview = ", ".join(guesses[:6])
                 if len(guesses) > 6:
                     preview += ", ..."
-                print(f"  حدس‌ها: {preview}")
+                learned = ""
+                if (
+                    learner is not None
+                    and learner.enabled
+                    and learner.lookup_solution(image_bytes)
+                ):
+                    learned = " (exact cache hit)"
+                print(f"  حدس‌ها{learned}: {preview}")
             else:
                 last_error = "OCR کپچا را تشخیص نداد"
                 print(f"  تلاش {attempt}/{max_retries}: {last_error}")
@@ -805,6 +827,13 @@ def fetch_page(
                 if int(result.get("result", 0)) == 1:
                     if submit_code != guess:
                         print(f"  ✓ کپچا با '{submit_code}' قبول شد")
+                    if learner is not None and learner.enabled:
+                        learner.record_success(
+                            image_bytes,
+                            submit_code,
+                            failed_this_image,
+                            ocr_guesses,
+                        )
                     domains = result.get("applicantDomainsList") or []
                     total_pages = max(1, int(result.get("page", 1)))
                     rows = [
@@ -814,7 +843,9 @@ def fetch_page(
                     return rows, total_pages
 
                 last_error = str(result.get("result_msg", "خطای نامشخص"))
-                if not needs_captcha(last_error):
+                if needs_captcha(last_error):
+                    failed_this_image.append(submit_code)
+                else:
                     raise RuntimeError(f"صفحه {page}: {last_error}")
 
         if not tried_any:
@@ -906,6 +937,11 @@ def parse_args() -> argparse.Namespace:
         help="With --search: output JSON",
     )
     parser.add_argument(
+        "--no-learn",
+        action="store_true",
+        help="Disable captcha learning cache (default: learn from solved captchas)",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Save captcha images to debug_captcha/",
@@ -952,6 +988,10 @@ def main() -> int:
         print("Loading OCR (ddddocr)...")
         ocr = CaptchaOcr()
         print("OCR ready.")
+
+    learner = CaptchaLearner(CAPTCHA_LEARN_PATH, enabled=not args.no_learn)
+    if learner.enabled:
+        print(learner.summary())
 
     client = EnamadClient()
     total_saved = 0
@@ -1028,6 +1068,7 @@ def main() -> int:
                     args.manual,
                     retries,
                     debug_dir,
+                    learner=learner,
                 )
                 if args.with_details:
                     enriched_rows = []
@@ -1038,6 +1079,9 @@ def main() -> int:
                 saved = save_domains(conn, rows, scrape_run_id=run_id)
                 total_saved += saved
                 pages_fetched += 1
+
+                if learner.enabled and pages_fetched % 25 == 0:
+                    print(f"  [{learner.summary()}]")
 
                 if args.all:
                     update_scrape_progress(conn, page, total_pages_api)
@@ -1079,8 +1123,12 @@ def main() -> int:
         raise
     finally:
         cleanup_captcha_images()
+        if learner.enabled:
+            learner.save()
 
     print(f"Done. {total_saved} records stored in MySQL (run_id={run_id}).")
+    if learner.enabled:
+        print(learner.summary())
     return 0
 
 

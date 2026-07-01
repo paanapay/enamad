@@ -17,6 +17,7 @@ cookies.txt
 captcha_tmp/
 debug_captcha/
 captcha.jpg
+captcha_learn.json
 
 # IDE / OS
 .idea/
