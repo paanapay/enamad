@@ -770,15 +770,25 @@ def cleanup_captcha_images() -> None:
         print(f"Removed {removed} captcha image(s).")
 
 
-def fetch_page(
+def _rows_from_result(result: dict, page: int) -> tuple[list[dict], int]:
+    domains = result.get("applicantDomainsList") or []
+    total_pages = max(1, int(result.get("page", 1)))
+    rows = [
+        normalize_row(item, ((page - 1) * PAGE_SIZE) + index + 1, page)
+        for index, item in enumerate(domains)
+    ]
+    return rows, total_pages
+
+
+def _solve_captcha_for_page(
     client: EnamadClient,
     page: int,
     ocr: CaptchaOcr | None,
     manual: bool,
     max_retries: int,
     debug_dir: Path | None,
-    learner: CaptchaLearner | None = None,
-) -> tuple[list[dict], int]:
+    learner: CaptchaLearner | None,
+) -> tuple[str, str, dict]:
     last_error = "خطای نامشخص"
 
     for attempt in range(1, max_retries + 1):
@@ -834,13 +844,7 @@ def fetch_page(
                             failed_this_image,
                             ocr_guesses,
                         )
-                    domains = result.get("applicantDomainsList") or []
-                    total_pages = max(1, int(result.get("page", 1)))
-                    rows = [
-                        normalize_row(item, ((page - 1) * PAGE_SIZE) + index + 1, page)
-                        for index, item in enumerate(domains)
-                    ]
-                    return rows, total_pages
+                    return token, submit_code, result
 
                 last_error = str(result.get("result_msg", "خطای نامشخص"))
                 if needs_captcha(last_error):
@@ -853,6 +857,51 @@ def fetch_page(
         print(f"  تلاش {attempt}/{max_retries}: کپچا اشتباه ({last_error})")
 
     raise RuntimeError(f"صفحه {page} بعد از {max_retries} تلاش ناموفق: {last_error}")
+
+
+def fetch_page_chunk(
+    client: EnamadClient,
+    start_page: int,
+    end_page: int | None,
+    ocr: CaptchaOcr | None,
+    manual: bool,
+    max_retries: int,
+    debug_dir: Path | None,
+    learner: CaptchaLearner | None = None,
+) -> tuple[list[tuple[int, list[dict]]], int | None]:
+    """Solve captcha once, then fetch consecutive pages while the API accepts reuse."""
+    token, submit_code, first_result = _solve_captcha_for_page(
+        client, start_page, ocr, manual, max_retries, debug_dir, learner
+    )
+
+    chunk: list[tuple[int, list[dict]]] = []
+    total_pages_api: int | None = None
+    page = start_page
+    result = first_result
+
+    while True:
+        if end_page is not None and page > end_page:
+            break
+
+        if page > start_page:
+            result = client.get_domain_list(page, token, submit_code)
+            if int(result.get("result", 0)) != 1:
+                message = str(result.get("result_msg", ""))
+                if needs_captcha(message):
+                    print(f"  کپچا برای صفحه {page} منقضی شد — کپچای جدید لازم است")
+                else:
+                    raise RuntimeError(f"صفحه {page}: {message}")
+                break
+
+        rows, total_pages_api = _rows_from_result(result, page)
+        chunk.append((page, rows))
+
+        if total_pages_api is not None and page >= total_pages_api:
+            break
+
+        page += 1
+
+    return chunk, total_pages_api
 
 
 def parse_args() -> argparse.Namespace:
@@ -1061,42 +1110,63 @@ def main() -> int:
                     label += f" / {total_pages_api}"
                 print(f"{label}...")
 
-                rows, total_pages_api = fetch_page(
+                chunk, total_pages_api = fetch_page_chunk(
                     client,
                     page,
+                    end_page if not args.all else None,
                     ocr,
                     args.manual,
                     retries,
                     debug_dir,
                     learner=learner,
                 )
-                if args.with_details:
-                    enriched_rows = []
-                    for row in rows:
-                        enriched_rows.append(maybe_enrich_row(client, row, True))
-                        time.sleep(max(0.0, delay * 0.3))
-                    rows = enriched_rows
-                saved = save_domains(conn, rows, scrape_run_id=run_id)
-                total_saved += saved
-                pages_fetched += 1
+                if not chunk:
+                    raise RuntimeError(f"صفحه {page}: هیچ رکوردی دریافت نشد")
+
+                if len(chunk) > 1:
+                    pages_in_chunk = ", ".join(str(p) for p, _ in chunk)
+                    print(f"  ✓ {len(chunk)} pages with one captcha: {pages_in_chunk}")
+
+                for chunk_page, rows in chunk:
+                    if args.with_details:
+                        enriched_rows = []
+                        for row in rows:
+                            enriched_rows.append(maybe_enrich_row(client, row, True))
+                            time.sleep(max(0.0, delay * 0.3))
+                        rows = enriched_rows
+
+                    saved = save_domains(conn, rows, scrape_run_id=run_id)
+                    total_saved += saved
+                    pages_fetched += 1
+
+                    if args.all:
+                        update_scrape_progress(conn, chunk_page, total_pages_api)
+
+                    commit_connection(conn)
+                    print(
+                        f"  -> page {chunk_page}: {len(rows)} records "
+                        f"(total: {total_saved}, committed)"
+                    )
+
+                    if total_pages_api is not None and chunk_page >= total_pages_api:
+                        print(f"Reached last available page ({total_pages_api}).")
+                        page = chunk_page + 1
+                        break
+
+                    if not args.all and end_page is not None and chunk_page >= end_page:
+                        page = chunk_page + 1
+                        break
+                else:
+                    page = chunk[-1][0] + 1
 
                 if learner.enabled and pages_fetched % 25 == 0:
                     print(f"  [{learner.summary()}]")
 
-                if args.all:
-                    update_scrape_progress(conn, page, total_pages_api)
-
-                commit_connection(conn)
-                print(f"  -> {len(rows)} records saved (total: {total_saved}, committed)")
-
-                if total_pages_api is not None and page >= total_pages_api:
-                    print(f"Reached last available page ({total_pages_api}).")
+                if total_pages_api is not None and page > total_pages_api:
+                    break
+                if not args.all and end_page is not None and page > end_page:
                     break
 
-                if not args.all and end_page is not None and page >= end_page:
-                    break
-
-                page += 1
                 time.sleep(max(0.0, delay))
 
             finish_scrape_run(
