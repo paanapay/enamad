@@ -24,6 +24,7 @@ import re
 import sys
 import time
 from collections import Counter
+from html import unescape
 from pathlib import Path
 
 import certifi
@@ -50,6 +51,7 @@ from db import (
 CAPTCHA_LEN = 5  # اینماد تقریباً همیشه ۵ کاراکتر
 
 BASE_URL = "https://enamad.ir/"
+TRUSTSEAL_URL = "https://trustseal.enamad.ir/"
 PAGE_SIZE = 30
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -389,6 +391,149 @@ class EnamadClient:
             snippet = response.text[:200].replace("\n", " ")
             raise RuntimeError(f"پاسخ نامعتبر از سرور: {snippet}") from exc
 
+    def fetch_trustseal_html(self, domain_id: str | int, code: str) -> str:
+        """Fetch trust seal page (POST, same as enamad.ir search modal)."""
+        last_error: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                response = self.session.post(
+                    TRUSTSEAL_URL,
+                    data={"id": str(domain_id), "Code": code},
+                    headers={"Referer": BASE_URL},
+                    timeout=90,
+                )
+                response.raise_for_status()
+                return response.text
+            except (
+                requests.exceptions.SSLError,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.HTTPError,
+            ) as exc:
+                last_error = exc
+                wait = attempt * 2
+                print(f"  trustseal error (attempt {attempt}/3), waiting {wait}s...")
+                time.sleep(wait)
+
+        raise RuntimeError(f"Could not fetch trust seal page: {last_error}") from last_error
+
+    def fetch_trustseal_details(self, domain_id: str | int, code: str) -> dict:
+        return parse_trustseal_html(self.fetch_trustseal_html(domain_id, code))
+
+
+TRUSTSEAL_LABELS = {
+    "صاحب امتیاز :": "owner_name",
+    "آدرس:": "business_address",
+    "تلفن:": "phone",
+    "پست الكترونیكی:": "email",
+    "ساعت پاسخگویی:": "work_hours",
+}
+
+
+def _clean_html_text(fragment: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", fragment)
+    text = unescape(text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _normalize_table_cell(value: str) -> str:
+    value = value.strip()
+    if value in ("-----------------", "—", "-", "–"):
+        return ""
+    return value
+
+
+def parse_services_table(html: str) -> list[dict]:
+    heading = "خدمات و مجوزهای کسب و کار"
+    start = html.find(heading)
+    if start < 0:
+        return []
+
+    table_match = re.search(
+        r"<table[^>]*\btable\b[^>]*>.*?<tbody>(.*?)</tbody>",
+        html[start:],
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    if not table_match:
+        return []
+
+    services: list[dict] = []
+    for row_match in re.finditer(
+        r"<tr>\s*(.*?)\s*</tr>",
+        table_match.group(1),
+        flags=re.DOTALL | re.IGNORECASE,
+    ):
+        cells = re.findall(
+            r"<td[^>]*>(.*?)</td>",
+            row_match.group(1),
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        if len(cells) < 7:
+            continue
+
+        cleaned = [_normalize_table_cell(_clean_html_text(cell)) for cell in cells[:7]]
+        row_num = int(cleaned[0]) if cleaned[0].isdigit() else len(services) + 1
+        services.append(
+            {
+                "row_num": row_num,
+                "service_title": cleaned[1],
+                "license_issuer": cleaned[2],
+                "license_number": cleaned[3],
+                "valid_from": cleaned[4],
+                "valid_to": cleaned[5],
+                "status": cleaned[6],
+            }
+        )
+
+    return services
+
+
+def parse_trustseal_html(html: str) -> dict:
+    details = {field: "" for field in TRUSTSEAL_LABELS.values()}
+    for label, field in TRUSTSEAL_LABELS.items():
+        pattern = (
+            rf"{re.escape(label)}\s*</div>\s*"
+            r'<div[^>]*\bcontentinformation\b[^>]*>\s*(.*?)\s*</div>'
+        )
+        match = re.search(pattern, html, flags=re.DOTALL | re.IGNORECASE)
+        if match:
+            details[field] = _clean_html_text(match.group(1))
+
+    shop_match = re.search(r'id="shopLink"[^>]*>(.*?)</a>', html, flags=re.DOTALL | re.IGNORECASE)
+    if shop_match:
+        details["shop_name"] = _clean_html_text(shop_match.group(1))
+
+    details["services"] = parse_services_table(html)
+    return details
+
+
+def enrich_row_with_trustseal(client: EnamadClient, row: dict) -> dict:
+    if not row.get("enamad_id") or not row.get("code"):
+        return row
+
+    details = client.fetch_trustseal_details(row["enamad_id"], row["code"])
+    enriched = dict(row)
+    for key in TRUSTSEAL_LABELS.values():
+        value = details.get(key, "")
+        if value:
+            enriched[key] = value
+
+    if not enriched.get("persian_name") and details.get("shop_name"):
+        enriched["persian_name"] = details["shop_name"]
+        enriched["business_name"] = details["shop_name"]
+
+    enriched["services"] = details.get("services") or []
+    return enriched
+
+
+def maybe_enrich_row(client: EnamadClient, row: dict, enabled: bool) -> dict:
+    if not enabled:
+        return row
+    try:
+        return enrich_row_with_trustseal(client, row)
+    except Exception as exc:
+        print(f"  Warning: trust seal details failed ({exc})")
+        return row
+
 
 def clean_domain(domain: str) -> str:
     value = domain.strip().lower()
@@ -437,12 +582,35 @@ def normalize_search_row(data: dict, queried_domain: str) -> dict:
 
 def print_search_result(row: dict) -> None:
     safe_print(f"  Domain:        {row['domain']}")
-    safe_print(f"  Business:      {row['business_name']}")
+    safe_print(f"  Persian name:  {row.get('persian_name') or row.get('business_name', '')}")
+    if row.get("owner_name"):
+        safe_print(f"  Owner:         {row['owner_name']}")
+    if row.get("business_address"):
+        safe_print(f"  Address:       {row['business_address']}")
+    if row.get("phone"):
+        safe_print(f"  Phone:         {row['phone']}")
+    if row.get("email"):
+        safe_print(f"  Email:         {row['email']}")
+    if row.get("work_hours"):
+        safe_print(f"  Work hours:    {row['work_hours']}")
     safe_print(f"  Province/City: {row['province']} / {row['city']}")
     safe_print(f"  Rating:        {row['rating']}")
     safe_print(f"  Approve:       {row['approve_date']}")
     safe_print(f"  Expire:        {row['expire_date']}")
     safe_print(f"  Trust seal:    {row['trustseal_url']}")
+    services = row.get("services") or []
+    if services:
+        safe_print(f"  Services ({len(services)}):")
+        for service in services:
+            title = service.get("service_title") or "?"
+            status = service.get("status") or ""
+            issuer = service.get("license_issuer") or ""
+            line = f"    - {title}"
+            if status:
+                line += f" [{status}]"
+            if issuer:
+                line += f" ({issuer})"
+            safe_print(line)
 
 
 def run_search(args, app_config) -> int:
@@ -467,6 +635,7 @@ def run_search(args, app_config) -> int:
     client = EnamadClient()
     found = 0
     saved = 0
+    fetch_details = not args.no_details
 
     if args.no_save:
         for raw in domains:
@@ -479,6 +648,9 @@ def run_search(args, app_config) -> int:
                 continue
 
             row = normalize_search_row(data, query)
+            if fetch_details:
+                print("  Fetching trust seal details...")
+                row = maybe_enrich_row(client, row, True)
             found += 1
             if args.json:
                 print(json.dumps(row, ensure_ascii=False, indent=2))
@@ -508,6 +680,9 @@ def run_search(args, app_config) -> int:
                 continue
 
             row = normalize_search_row(data, query)
+            if fetch_details:
+                print("  Fetching trust seal details...")
+                row = maybe_enrich_row(client, row, True)
             found += 1
 
             if args.json:
@@ -716,6 +891,16 @@ def parse_args() -> argparse.Namespace:
         help="With --search: print only, do not write to MySQL",
     )
     parser.add_argument(
+        "--no-details",
+        action="store_true",
+        help="With --search: skip trust seal page (address, phone, email)",
+    )
+    parser.add_argument(
+        "--with-details",
+        action="store_true",
+        help="With --pages/--all: fetch trust seal contact info per record (slow)",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="With --search: output JSON",
@@ -844,6 +1029,12 @@ def main() -> int:
                     retries,
                     debug_dir,
                 )
+                if args.with_details:
+                    enriched_rows = []
+                    for row in rows:
+                        enriched_rows.append(maybe_enrich_row(client, row, True))
+                        time.sleep(max(0.0, delay * 0.3))
+                    rows = enriched_rows
                 saved = save_domains(conn, rows, scrape_run_id=run_id)
                 total_saved += saved
                 pages_fetched += 1

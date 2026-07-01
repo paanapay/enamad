@@ -103,8 +103,59 @@ def init_database(cfg: MySQLConfig) -> None:
             for statement in statements:
                 cursor.execute(statement)
         conn.commit()
+        ensure_domain_detail_columns(conn)
+        ensure_services_table(conn)
+        conn.commit()
     finally:
         conn.close()
+
+
+DOMAIN_DETAIL_COLUMNS = {
+    "owner_name": "VARCHAR(512) NULL",
+    "business_address": "VARCHAR(1024) NULL",
+    "phone": "VARCHAR(64) NULL",
+    "email": "VARCHAR(255) NULL",
+    "work_hours": "VARCHAR(128) NULL",
+}
+
+
+def ensure_domain_detail_columns(conn) -> None:
+    with conn.cursor() as cursor:
+        cursor.execute("SHOW COLUMNS FROM enamad_domains")
+        existing = {row["Field"] for row in cursor.fetchall()}
+        for name, ddl in DOMAIN_DETAIL_COLUMNS.items():
+            if name not in existing:
+                cursor.execute(f"ALTER TABLE enamad_domains ADD COLUMN {name} {ddl}")
+
+
+def ensure_services_table(conn) -> None:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS enamad_domain_services (
+              id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+              enamad_id VARCHAR(64) NOT NULL,
+              code VARCHAR(128) NOT NULL,
+              row_num INT UNSIGNED NOT NULL,
+              service_title VARCHAR(512) NOT NULL,
+              license_issuer VARCHAR(512) NULL,
+              license_number VARCHAR(128) NULL,
+              valid_from VARCHAR(32) NULL,
+              valid_to VARCHAR(32) NULL,
+              status VARCHAR(64) NULL,
+              scrape_run_id BIGINT UNSIGNED NULL,
+              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              PRIMARY KEY (id),
+              UNIQUE KEY uk_service_row (enamad_id, code, row_num),
+              KEY idx_service_title (service_title(191)),
+              KEY idx_service_status (status),
+              CONSTRAINT fk_services_domain
+                FOREIGN KEY (enamad_id, code) REFERENCES enamad_domains (enamad_id, code)
+                ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """
+        )
 
 
 def start_scrape_run(
@@ -153,17 +204,25 @@ def save_domains(conn, rows: list[dict], scrape_run_id: int | None = None) -> in
 
     sql = """
         INSERT INTO enamad_domains (
-            enamad_id, code, domain, business_name, province, city,
+            enamad_id, code, domain, business_name, owner_name, business_address,
+            phone, email, work_hours, province, city,
             rating, approve_date, expire_date, trustseal_url,
             source_page, source_row, scrape_run_id
         ) VALUES (
-            %(enamad_id)s, %(code)s, %(domain)s, %(business_name)s, %(province)s, %(city)s,
+            %(enamad_id)s, %(code)s, %(domain)s, %(business_name)s, %(owner_name)s,
+            %(business_address)s, %(phone)s, %(email)s, %(work_hours)s,
+            %(province)s, %(city)s,
             %(rating)s, %(approve_date)s, %(expire_date)s, %(trustseal_url)s,
             %(source_page)s, %(source_row)s, %(scrape_run_id)s
         )
         ON DUPLICATE KEY UPDATE
             domain = VALUES(domain),
             business_name = VALUES(business_name),
+            owner_name = VALUES(owner_name),
+            business_address = VALUES(business_address),
+            phone = VALUES(phone),
+            email = VALUES(email),
+            work_hours = VALUES(work_hours),
             province = VALUES(province),
             city = VALUES(city),
             rating = VALUES(rating),
@@ -183,7 +242,12 @@ def save_domains(conn, rows: list[dict], scrape_run_id: int | None = None) -> in
                 "enamad_id": str(row.get("enamad_id", "")),
                 "code": str(row.get("code", "")),
                 "domain": row.get("domain", ""),
-                "business_name": row.get("business_name") or None,
+                "business_name": row.get("business_name") or row.get("persian_name") or None,
+                "owner_name": row.get("owner_name") or None,
+                "business_address": row.get("business_address") or None,
+                "phone": row.get("phone") or None,
+                "email": row.get("email") or None,
+                "work_hours": row.get("work_hours") or None,
                 "province": row.get("province") or None,
                 "city": row.get("city") or None,
                 "rating": int(row.get("rating") or 0),
@@ -199,7 +263,72 @@ def save_domains(conn, rows: list[dict], scrape_run_id: int | None = None) -> in
     with conn.cursor() as cursor:
         cursor.executemany(sql, payload)
 
+    save_domain_services(conn, rows, scrape_run_id=scrape_run_id)
     return len(payload)
+
+
+def save_domain_services(conn, rows: list[dict], scrape_run_id: int | None = None) -> int:
+    saved = 0
+    insert_sql = """
+        INSERT INTO enamad_domain_services (
+            enamad_id, code, row_num, service_title, license_issuer,
+            license_number, valid_from, valid_to, status, scrape_run_id
+        ) VALUES (
+            %(enamad_id)s, %(code)s, %(row_num)s, %(service_title)s, %(license_issuer)s,
+            %(license_number)s, %(valid_from)s, %(valid_to)s, %(status)s, %(scrape_run_id)s
+        )
+        ON DUPLICATE KEY UPDATE
+            service_title = VALUES(service_title),
+            license_issuer = VALUES(license_issuer),
+            license_number = VALUES(license_number),
+            valid_from = VALUES(valid_from),
+            valid_to = VALUES(valid_to),
+            status = VALUES(status),
+            scrape_run_id = VALUES(scrape_run_id),
+            updated_at = CURRENT_TIMESTAMP
+    """
+
+    with conn.cursor() as cursor:
+        for row in rows:
+            if "services" not in row:
+                continue
+
+            enamad_id = str(row.get("enamad_id", ""))
+            code = str(row.get("code", ""))
+            if not enamad_id or not code:
+                continue
+
+            services = row.get("services") or []
+            cursor.execute(
+                "DELETE FROM enamad_domain_services WHERE enamad_id = %s AND code = %s",
+                (enamad_id, code),
+            )
+
+            batch = []
+            for service in services:
+                title = (service.get("service_title") or "").strip()
+                if not title:
+                    continue
+                batch.append(
+                    {
+                        "enamad_id": enamad_id,
+                        "code": code,
+                        "row_num": int(service.get("row_num") or 0) or len(batch) + 1,
+                        "service_title": title,
+                        "license_issuer": service.get("license_issuer") or None,
+                        "license_number": service.get("license_number") or None,
+                        "valid_from": service.get("valid_from") or None,
+                        "valid_to": service.get("valid_to") or None,
+                        "status": service.get("status") or None,
+                        "scrape_run_id": scrape_run_id,
+                    }
+                )
+
+            if batch:
+                cursor.executemany(insert_sql, batch)
+                saved += len(batch)
+
+    return saved
 
 
 STATE_LAST_PAGE = "last_completed_page"
