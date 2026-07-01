@@ -540,6 +540,20 @@ class ParallelDashboard:
         pids = {row["pid"] for row in rows if row.get("pid", 0) > 0}
         return len(pids)
 
+    @staticmethod
+    def _eta_seconds(pages_done: int, total_pages: int, elapsed: float) -> float:
+        if pages_done <= 0 or total_pages <= 0:
+            return float("inf")
+        remaining = max(0, total_pages - pages_done)
+        return remaining * (elapsed / pages_done)
+
+    @staticmethod
+    def _eta_label(eta_sec: float) -> str:
+        if eta_sec == float("inf"):
+            return ""
+        finish_clock = time.strftime("%H:%M", time.localtime(time.time() + eta_sec))
+        return f"ETA {fmt_duration(eta_sec)} @{finish_clock}"
+
     def render(self) -> None:
         rows = self._snapshot()
         elapsed = max(0.001, time.time() - self.started)
@@ -547,6 +561,12 @@ class ParallelDashboard:
         total_records = sum(row["records"] for row in rows)
         speed = total_pages_done * 60 / elapsed
         active_procs = self._active_process_count(rows)
+        global_span = max(1, self.global_end - self.global_start + 1)
+        global_done = total_pages_done
+        global_ratio = min(1.0, global_done / global_span)
+        eta_sec = self._eta_seconds(global_done, global_span, elapsed)
+        eta_text = self._eta_label(eta_sec)
+        eta_part = f"  {eta_text}" if eta_text else ""
 
         lines: list[str] = []
         w = 56
@@ -556,7 +576,8 @@ class ParallelDashboard:
             paint("| ", C.CYAN)
             + paint("WORKERS", C.CYAN, C.BOLD)
             + paint(
-                f"  {proc_label}  {fmt_duration(elapsed)}  {speed:.0f} pg/min  {fmt_int(total_records)} rows",
+                f"  {proc_label}  {fmt_duration(elapsed)}  {speed:.0f} pg/min"
+                f"{eta_part}  {fmt_int(total_records)} rows",
                 C.DIM,
             )
             + paint(" |", C.CYAN)
@@ -588,10 +609,10 @@ class ParallelDashboard:
             )
             lines.append(line)
 
-        global_span = max(1, self.global_end - self.global_start + 1)
-        global_done = total_pages_done
-        global_ratio = min(1.0, global_done / global_span)
         lines.append(paint("+" + "-" * w + "+", C.CYAN))
+        eta_suffix = (
+            paint(f"  {eta_text}", C.YELLOW, C.DIM) if eta_text else ""
+        )
         lines.append(
             paint("| ", C.CYAN)
             + paint("Overall", C.DIM)
@@ -601,6 +622,7 @@ class ParallelDashboard:
                 f" {fmt_int(global_done)}/{fmt_int(global_span)} pg",
                 C.WHITE,
             )
+            + eta_suffix
             + paint(" |", C.CYAN)
         )
         lines.append(paint("+" + "-" * w + "+", C.CYAN))
