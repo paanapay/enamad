@@ -116,10 +116,10 @@ class CaptchaLearner:
             cleaned = re_sub_alnum(code)
             if len(cleaned) != CAPTCHA_LEN:
                 return
-            for variant in (cleaned.lower(), cleaned, cleaned.upper()):
-                if variant not in seen:
-                    seen.add(variant)
-                    ordered.append(variant)
+            low = cleaned.lower()
+            if low not in seen:
+                seen.add(low)
+                ordered.append(low)
 
         # OCR ranking first — never let learning push a guess ahead of OCR top picks
         for candidate in candidates:

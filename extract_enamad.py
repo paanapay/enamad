@@ -260,13 +260,27 @@ class CaptchaOcr:
         if learner is not None and learner.enabled:
             ordered = learner.expand_candidates(ordered, image_bytes)
 
-        return ordered[:15]
+        return unique_captcha_guesses(ordered, max_guesses=8)
 
 
 def captcha_submit_variants(code: str) -> list[str]:
     if len(code) != CAPTCHA_LEN:
         return []
     return [code.lower()]
+
+
+def unique_captcha_guesses(candidates: list[str], max_guesses: int = 8) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for item in candidates:
+        code = re.sub(r"[^a-zA-Z0-9]", "", item or "").lower()
+        if len(code) != CAPTCHA_LEN or code in seen:
+            continue
+        seen.add(code)
+        unique.append(code)
+        if len(unique) >= max_guesses:
+            break
+    return unique
 
 
 def resolve_ca_bundle() -> str | bool:
@@ -827,36 +841,35 @@ def _solve_captcha_for_page(
                 continue
 
         tried_any = False
-        for guess in guesses:
-            if not guess:
-                continue
-            for submit_code in captcha_submit_variants(guess):
-                tried_any = True
-                result = client.get_domain_list(page, token, submit_code)
+        for index, submit_code in enumerate(unique_captcha_guesses(guesses, max_guesses=8), start=1):
+            tried_any = True
+            print(f"  try {index}: {submit_code}...", flush=True)
+            result = client.get_domain_list(page, token, submit_code)
 
-                if int(result.get("result", 0)) == 1:
-                    if submit_code != guess:
-                        print(f"  ✓ کپچا با '{submit_code}' قبول شد")
-                    if learner is not None and learner.enabled:
-                        learner.record_success(
-                            image_bytes,
-                            submit_code,
-                            failed_this_image,
-                            ocr_guesses,
-                        )
-                    return token, submit_code, result
+            if int(result.get("result", 0)) == 1:
+                if learner is not None and learner.enabled:
+                    learner.record_success(
+                        image_bytes,
+                        submit_code,
+                        failed_this_image,
+                        ocr_guesses,
+                    )
+                return token, submit_code, result
 
-                last_error = str(result.get("result_msg", "خطای نامشخص"))
-                if needs_captcha(last_error):
-                    failed_this_image.append(submit_code)
-                else:
-                    raise RuntimeError(f"صفحه {page}: {last_error}")
+            last_error = str(result.get("result_msg", "خطای نامشخص"))
+            if needs_captcha(last_error):
+                failed_this_image.append(submit_code)
+            else:
+                raise RuntimeError(f"صفحه {page}: {last_error}")
 
         if not tried_any:
             last_error = "کد کپچا خالی است"
         print(f"  تلاش {attempt}/{max_retries}: کپچا اشتباه ({last_error})")
 
     raise RuntimeError(f"صفحه {page} بعد از {max_retries} تلاش ناموفق: {last_error}")
+
+
+MAX_PAGES_PER_CAPTCHA = 5
 
 
 def fetch_page_chunk(
@@ -868,6 +881,7 @@ def fetch_page_chunk(
     max_retries: int,
     debug_dir: Path | None,
     learner: CaptchaLearner | None = None,
+    reuse_captcha: bool = True,
 ) -> tuple[list[tuple[int, list[dict]]], int | None]:
     """Solve captcha once, then fetch consecutive pages while the API accepts reuse."""
     token, submit_code, first_result = _solve_captcha_for_page(
@@ -878,12 +892,16 @@ def fetch_page_chunk(
     total_pages_api: int | None = None
     page = start_page
     result = first_result
+    pages_in_session = 0
 
     while True:
         if end_page is not None and page > end_page:
             break
+        if reuse_captcha and pages_in_session >= MAX_PAGES_PER_CAPTCHA:
+            break
 
         if page > start_page:
+            print(f"  reuse captcha -> page {page}...", flush=True)
             result = client.get_domain_list(page, token, submit_code)
             if int(result.get("result", 0)) != 1:
                 message = str(result.get("result_msg", ""))
@@ -895,6 +913,10 @@ def fetch_page_chunk(
 
         rows, total_pages_api = _rows_from_result(result, page)
         chunk.append((page, rows))
+        pages_in_session += 1
+
+        if not reuse_captcha:
+            break
 
         if total_pages_api is not None and page >= total_pages_api:
             break
@@ -984,6 +1006,11 @@ def parse_args() -> argparse.Namespace:
         "--json",
         action="store_true",
         help="With --search: output JSON",
+    )
+    parser.add_argument(
+        "--no-chunk",
+        action="store_true",
+        help="Fetch one page per captcha (disable captcha reuse across pages)",
     )
     parser.add_argument(
         "--no-learn",
@@ -1119,6 +1146,7 @@ def main() -> int:
                     retries,
                     debug_dir,
                     learner=learner,
+                    reuse_captcha=not args.no_chunk,
                 )
                 if not chunk:
                     raise RuntimeError(f"صفحه {page}: هیچ رکوردی دریافت نشد")
