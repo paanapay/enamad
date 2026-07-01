@@ -53,6 +53,7 @@ from db import (
     commit_connection,
     finish_scrape_run,
     fix_encoded_domains,
+    refresh_domain_services,
     get_scrape_state,
     init_database,
     load_config,
@@ -522,11 +523,13 @@ def parse_services_table(html: str) -> list[dict]:
             continue
 
         cleaned = [_normalize_table_cell(_clean_html_text(cell)) for cell in cells[:7]]
-        row_num = int(cleaned[0]) if cleaned[0].isdigit() else len(services) + 1
+        title = cleaned[1].strip()
+        if not title:
+            continue
         services.append(
             {
-                "row_num": row_num,
-                "service_title": cleaned[1],
+                "row_num": len(services) + 1,
+                "service_title": title,
                 "license_issuer": cleaned[2],
                 "license_number": cleaned[3],
                 "valid_from": cleaned[4],
@@ -1682,6 +1685,19 @@ def parse_args() -> argparse.Namespace:
         help="Decode URL-encoded domains already stored in MySQL (e.g. %%D9%%BE...)",
     )
     parser.add_argument(
+        "--refresh-services",
+        metavar="DOMAIN",
+        nargs="?",
+        const="__all__",
+        help="Re-fetch trust seal and update all services in DB (optional: one domain)",
+    )
+    parser.add_argument(
+        "--refresh-limit",
+        type=int,
+        default=None,
+        help="With --refresh-services: max domains to refresh",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
         help="Fetch all pages until the end of the list",
@@ -1831,6 +1847,22 @@ def main() -> int:
         with mysql_connection(app_config.mysql) as conn:
             fixed = fix_encoded_domains(conn)
         print(f"Fixed {fixed} URL-encoded domain(s) in {app_config.mysql.database}.")
+        return 0
+
+    if args.refresh_services:
+        app_config = load_config(config_path)
+        domain = None if args.refresh_services == "__all__" else args.refresh_services
+        delay = args.delay if args.delay is not None else app_config.scraper.delay
+        with mysql_connection(app_config.mysql) as conn:
+            ok, failed = refresh_domain_services(
+                conn,
+                domain=domain,
+                limit=args.refresh_limit,
+                delay=delay,
+            )
+            commit_connection(conn)
+        scope = domain or "all domains"
+        print(f"Refreshed services for {scope}: {ok} ok, {failed} failed.")
         return 0
 
     app_config = load_config(config_path)

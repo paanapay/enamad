@@ -55,6 +55,96 @@ def normalize_domain(domain: str) -> str:
     return value.split("/")[0].split("?")[0].split("#")[0].strip()
 
 
+def refresh_domain_trustseal(conn, domain_id: int) -> tuple[dict, list[dict]] | None:
+    """Fetch trust seal page and refresh contact info + all services in DB."""
+    from extract_enamad import EnamadClient, TRUSTSEAL_LABELS
+
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT id, enamad_id, code, domain, business_name, owner_name,
+                   business_address, phone, email, work_hours, province, city,
+                   rating, approve_date, expire_date, trustseal_url,
+                   source_page, source_row, updated_at, created_at
+            FROM enamad_domains
+            WHERE id = %s
+            """,
+            (domain_id,),
+        )
+        row = cursor.fetchone()
+    if not row or not row.get("enamad_id") or not row.get("code"):
+        return None
+
+    client = EnamadClient()
+    details = client.fetch_trustseal_details(row["enamad_id"], row["code"])
+    enriched = dict(row)
+    for field in TRUSTSEAL_LABELS.values():
+        value = details.get(field, "")
+        if value:
+            enriched[field] = value
+    if not enriched.get("business_name") and details.get("shop_name"):
+        enriched["business_name"] = details["shop_name"]
+    enriched["services"] = details.get("services") or []
+
+    save_domains(conn, [enriched])
+    services = [
+        {
+            "service_title": item.get("service_title"),
+            "license_issuer": item.get("license_issuer"),
+            "status": item.get("status"),
+            "valid_from": item.get("valid_from"),
+            "valid_to": item.get("valid_to"),
+        }
+        for item in enriched["services"]
+    ]
+    return enriched, services
+
+
+def refresh_domain_services(
+    conn,
+    *,
+    domain: str | None = None,
+    limit: int | None = None,
+    delay: float = 0.5,
+) -> tuple[int, int]:
+    """Re-fetch trust seal pages and update services for stored domains."""
+    import time
+
+    where = "WHERE enamad_id IS NOT NULL AND enamad_id != '' AND code IS NOT NULL AND code != ''"
+    params: list = []
+    if domain:
+        where += " AND domain = %s"
+        params.append(normalize_domain(domain))
+
+    limit_sql = ""
+    if limit is not None and limit > 0:
+        limit_sql = " LIMIT %s"
+        params.append(limit)
+
+    with conn.cursor() as cursor:
+        cursor.execute(
+            f"SELECT id, domain FROM enamad_domains {where} ORDER BY id ASC{limit_sql}",
+            params,
+        )
+        rows = cursor.fetchall()
+
+    ok = 0
+    failed = 0
+    for index, row in enumerate(rows, start=1):
+        try:
+            result = refresh_domain_trustseal(conn, row["id"])
+            if result:
+                ok += 1
+            else:
+                failed += 1
+        except Exception:
+            failed += 1
+        if delay > 0 and index < len(rows):
+            time.sleep(delay)
+
+    return ok, failed
+
+
 def fix_encoded_domains(conn) -> int:
     """Repair domains stored with percent-encoding (e.g. Persian IDN from API)."""
     fixed = 0
@@ -352,7 +442,7 @@ def save_domain_services(conn, rows: list[dict], scrape_run_id: int | None = Non
             )
 
             batch = []
-            for service in services:
+            for row_num, service in enumerate(services, start=1):
                 title = (service.get("service_title") or "").strip()
                 if not title:
                     continue
@@ -360,7 +450,7 @@ def save_domain_services(conn, rows: list[dict], scrape_run_id: int | None = Non
                     {
                         "enamad_id": enamad_id,
                         "code": code,
-                        "row_num": int(service.get("row_num") or 0) or len(batch) + 1,
+                        "row_num": row_num,
                         "service_title": title,
                         "license_issuer": service.get("license_issuer") or None,
                         "license_number": service.get("license_number") or None,

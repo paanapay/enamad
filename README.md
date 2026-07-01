@@ -266,6 +266,44 @@ Copy `config.example.ini` to `config.ini`.
 
 ---
 
+## Telegram bot
+
+Browse the scraped database from Telegram.
+
+### Setup
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
+2. Add to `config.ini`:
+
+```ini
+[telegram]
+bot_token = 123456:ABC...
+allowed_users =          ; optional: your Telegram user ID(s), comma-separated
+live_search = yes        ; query enamad.ir if not found locally
+```
+
+3. Install dependencies and run:
+
+```bash
+pip install -r requirements.txt
+python telegram_bot.py
+```
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| 🔍 Search | Domain, business name, or owner (local DB + optional live API) |
+| 🆕 Latest | Recently updated records in MySQL |
+| 📅 New approvals | Sorted by approve date |
+| ⭐ Top rated | 4–5 star domains |
+| 🗺 By province | Browse by province |
+| 📊 Stats | DB size, scrape progress, last run |
+
+Send any domain name as text to search directly.
+
+---
+
 ## Notes
 
 - Scraping many pages takes time (captcha + delay per page).
