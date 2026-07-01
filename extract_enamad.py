@@ -23,8 +23,12 @@ import os
 import re
 import sys
 import time
+import threading
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass
 from html import unescape
+from multiprocessing import Manager
 from pathlib import Path
 
 import certifi
@@ -36,18 +40,30 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from captcha_learn import CaptchaLearner
-from console_ui import ScrapeConsole, ScrapeStats, enable_colors, paint, C
+from console_ui import (
+    ScrapeConsole,
+    ScrapeStats,
+    WorkerConsole,
+    ParallelDashboard,
+    enable_colors,
+    paint,
+    C,
+)
 from db import (
     commit_connection,
     finish_scrape_run,
+    fix_encoded_domains,
     get_scrape_state,
     init_database,
     load_config,
     mysql_connection,
+    normalize_domain,
     reset_scrape_state,
     save_domains,
     start_scrape_run,
     update_scrape_progress,
+    get_worker_progress,
+    update_worker_progress,
 )
 
 CAPTCHA_LEN = 5  # اینماد تقریباً همیشه ۵ کاراکتر
@@ -208,10 +224,18 @@ class CaptchaOcr:
         outputs.append(self._to_bytes_cv(otsu))
         return outputs
 
-    def _preprocess_variants(self, image_bytes: bytes) -> list[tuple[bytes, int]]:
+    def _preprocess_variants(
+        self, image_bytes: bytes, fast: bool = False
+    ) -> list[tuple[bytes, int]]:
         """(bytes, weight) — وزن بیشتر = برش دقیق‌تر روی متن اصلی."""
         weighted: list[tuple[bytes, int]] = []
         base = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+
+        if fast:
+            crop = self._focus_crops(base)[0]
+            for variant in self._enhance_crop(crop, scale=3)[:2]:
+                weighted.append((variant, 4))
+            return weighted
 
         for crop in self._focus_crops(base):
             for variant in self._enhance_crop(crop, scale=3):
@@ -235,10 +259,11 @@ class CaptchaOcr:
         self,
         image_bytes: bytes,
         learner: CaptchaLearner | None = None,
+        fast: bool = False,
     ) -> list[str]:
         votes: Counter[str] = Counter()
 
-        for variant, weight in self._preprocess_variants(image_bytes):
+        for variant, weight in self._preprocess_variants(image_bytes, fast=fast):
             raw = CaptchaOcr._engine.classification(variant)
             code = self._sanitize(raw)
             for guess in self._extract_five_char_slices(code):
@@ -562,11 +587,7 @@ def maybe_enrich_row(client: EnamadClient, row: dict, enabled: bool) -> dict:
 
 
 def clean_domain(domain: str) -> str:
-    value = domain.strip().lower()
-    for prefix in ("https://www.", "http://www.", "https://", "http://", "www."):
-        if value.startswith(prefix):
-            value = value[len(prefix) :]
-    return value.split("/")[0].split("?")[0].split("#")[0]
+    return normalize_domain(domain)
 
 
 def needs_captcha(message: str) -> bool:
@@ -593,7 +614,7 @@ def normalize_search_row(data: dict, queried_domain: str) -> dict:
     return {
         "enamad_id": str(domain_id),
         "code": str(code),
-        "domain": data.get("domain_address") or queried_domain,
+        "domain": normalize_domain(str(data.get("domain_address") or queried_domain)),
         "business_name": data.get("persian_name") or data.get("nameper") or "",
         "province": province,
         "city": city,
@@ -747,7 +768,7 @@ def normalize_row(item: dict, row_number: int, page: int) -> dict:
     return {
         "enamad_id": str(domain_id),
         "code": str(code),
-        "domain": item.get("domain_address", ""),
+        "domain": normalize_domain(str(item.get("domain_address", ""))),
         "business_name": item.get("persian_name", "") or "",
         "province": item.get("province", "") or "",
         "city": item.get("city", "") or "",
@@ -760,7 +781,11 @@ def normalize_row(item: dict, row_number: int, page: int) -> dict:
     }
 
 
-def save_captcha_image(image_bytes: bytes, page: int, attempt: int, debug_dir: Path | None) -> Path:
+def save_captcha_image(
+    image_bytes: bytes, page: int, attempt: int, debug_dir: Path | None, *, force: bool = False
+) -> Path | None:
+    if debug_dir is None and not force:
+        return None
     save_dir = debug_dir or (SCRIPT_DIR / "captcha_tmp")
     save_dir.mkdir(parents=True, exist_ok=True)
     img_path = save_dir / f"captcha_page_{page}_try{attempt}.jpg"
@@ -805,15 +830,21 @@ def _solve_captcha_for_page(
     learner: CaptchaLearner | None,
     ui: ScrapeConsole | None = None,
     stats: ScrapeStats | None = None,
+    fast_ocr: bool = False,
+    wcon: WorkerConsole | None = None,
 ) -> tuple[str, str, dict]:
     last_error = "خطای نامشخص"
 
     for attempt in range(1, max_retries + 1):
         token, image_bytes = client.refresh_captcha()
-        img_path = save_captcha_image(image_bytes, page, attempt, debug_dir)
+        img_path = save_captcha_image(
+            image_bytes, page, attempt, debug_dir, force=manual
+        )
         failed_this_image: list[str] = []
 
         if manual:
+            if img_path is None:
+                raise RuntimeError("ذخیره تصویر کپچا برای حالت manual ناموفق بود.")
             print(f"  تصویر کپچا: {img_path}")
             if sys.platform == "win32":
                 os.startfile(img_path)
@@ -824,7 +855,7 @@ def _solve_captcha_for_page(
         elif ocr is None:
             raise RuntimeError("OCR فعال نیست.")
         else:
-            ocr_guesses = ocr.read_candidates(image_bytes, learner=learner)
+            ocr_guesses = ocr.read_candidates(image_bytes, learner=learner, fast=fast_ocr)
             guesses = ocr_guesses
             if guesses:
                 preview = ", ".join(guesses[:6])
@@ -839,12 +870,16 @@ def _solve_captcha_for_page(
                     learned = " (cache)"
                 if ui:
                     ui.captcha_guesses(preview, learned)
+                elif wcon:
+                    wcon.captcha_guesses(preview, learned)
                 else:
                     print(f"  حدس‌ها{learned}: {preview}")
             else:
                 last_error = "OCR کپچا را تشخیص نداد"
                 if ui:
                     ui.captcha_fail(attempt, max_retries, last_error)
+                elif wcon:
+                    wcon.captcha_fail(attempt, max_retries, last_error)
                 else:
                     print(f"  تلاش {attempt}/{max_retries}: {last_error}")
                 continue
@@ -854,6 +889,8 @@ def _solve_captcha_for_page(
             tried_any = True
             if ui:
                 ui.captcha_try(index, submit_code)
+            elif wcon:
+                wcon.captcha_try(index, submit_code)
             else:
                 print(f"  try {index}: {submit_code}...", flush=True)
             result = client.get_domain_list(page, token, submit_code)
@@ -882,13 +919,15 @@ def _solve_captcha_for_page(
             stats.note_captcha_round_failed()
         if ui:
             ui.captcha_fail(attempt, max_retries, last_error)
+        elif wcon:
+            wcon.captcha_fail(attempt, max_retries, last_error)
         else:
             print(f"  تلاش {attempt}/{max_retries}: کپچا اشتباه ({last_error})")
 
     raise RuntimeError(f"صفحه {page} بعد از {max_retries} تلاش ناموفق: {last_error}")
 
 
-MAX_PAGES_PER_CAPTCHA = 5
+DEFAULT_CHUNK_PAGES = 5
 
 
 def fetch_page_chunk(
@@ -903,6 +942,9 @@ def fetch_page_chunk(
     reuse_captcha: bool = True,
     ui: ScrapeConsole | None = None,
     stats: ScrapeStats | None = None,
+    max_chunk_pages: int = DEFAULT_CHUNK_PAGES,
+    fast_ocr: bool = False,
+    wcon: WorkerConsole | None = None,
 ) -> tuple[list[tuple[int, list[dict]]], int | None]:
     """Solve captcha once, then fetch consecutive pages while the API accepts reuse."""
     token, submit_code, first_result = _solve_captcha_for_page(
@@ -915,6 +957,8 @@ def fetch_page_chunk(
         learner,
         ui=ui,
         stats=stats,
+        fast_ocr=fast_ocr,
+        wcon=wcon,
     )
 
     chunk: list[tuple[int, list[dict]]] = []
@@ -926,19 +970,25 @@ def fetch_page_chunk(
     while True:
         if end_page is not None and page > end_page:
             break
-        if reuse_captcha and pages_in_session >= MAX_PAGES_PER_CAPTCHA:
+        if reuse_captcha and pages_in_session >= max(1, max_chunk_pages):
             break
 
         if page > start_page:
             if ui:
                 ui.captcha_reuse(page)
+            elif wcon:
+                wcon.captcha_reuse(page)
             else:
                 print(f"  reuse captcha -> page {page}...", flush=True)
             result = client.get_domain_list(page, token, submit_code)
             if int(result.get("result", 0)) != 1:
                 message = str(result.get("result_msg", ""))
                 if needs_captcha(message):
-                    print(f"  کپچا برای صفحه {page} منقضی شد — کپچای جدید لازم است")
+                    msg = f"کپچا برای صفحه {page} منقضی شد — کپچای جدید لازم است"
+                    if wcon:
+                        wcon.warn(msg)
+                    else:
+                        print(f"  {msg}")
                 else:
                     raise RuntimeError(f"صفحه {page}: {message}")
                 break
@@ -958,6 +1008,662 @@ def fetch_page_chunk(
     return chunk, total_pages_api
 
 
+def worker_log(worker_id: int | None, message: str, wcon: WorkerConsole | None = None) -> None:
+    if wcon is not None:
+        wcon.info(message)
+        return
+    prefix = f"[W{worker_id}] " if worker_id is not None else ""
+    safe_print(f"{prefix}{message}")
+
+
+def report_worker_progress(
+    shared,
+    lock,
+    worker_id: int | None,
+    *,
+    last_page: int | None = None,
+    pages_done: int | None = None,
+    records: int | None = None,
+    status: str | None = None,
+    activity: str | None = None,
+    pid: int | None = None,
+) -> None:
+    if shared is None or lock is None or worker_id is None:
+        return
+    key = str(worker_id)
+    with lock:
+        current = dict(shared.get(key, {}))
+        if last_page is not None:
+            current["last_page"] = last_page
+        if pages_done is not None:
+            current["pages_done"] = pages_done
+        if records is not None:
+            current["records"] = records
+        if status is not None:
+            current["status"] = status
+        if activity is not None:
+            current["activity"] = activity
+        if pid is not None:
+            current["pid"] = pid
+        shared[key] = current
+
+
+def learn_path_for_worker(worker_id: int | None) -> Path:
+    if worker_id is None:
+        return CAPTCHA_LEARN_PATH
+    return SCRIPT_DIR / f"captcha_learn_w{worker_id}.json"
+
+
+def split_page_ranges(start: int, end: int, workers: int) -> list[tuple[int, int]]:
+    if start > end or workers < 1:
+        return []
+    total = end - start + 1
+    workers = min(workers, total)
+    base, extra = divmod(total, workers)
+    ranges: list[tuple[int, int]] = []
+    page = start
+    for index in range(workers):
+        size = base + (1 if index < extra else 0)
+        ranges.append((page, page + size - 1))
+        page += size
+    return ranges
+
+
+@dataclass(frozen=True)
+class ListScrapeOptions:
+    config_path: str
+    start_page: int | None
+    end_page: int | None
+    all_mode: bool
+    delay: float
+    retries: int
+    max_pages_per_chunk: int
+    manual: bool
+    fast_ocr: bool
+    no_chunk: bool
+    with_details: bool
+    no_learn: bool
+    debug: bool
+    worker_id: int | None = None
+    use_pretty: bool = True
+    live_ui: bool = True
+    resume: bool = True
+    reset: bool = False
+    start_delay: float = 0.0
+    verbose_worker: bool = False
+
+
+def resolve_list_scrape_start(
+    conn,
+    options: ListScrapeOptions,
+) -> tuple[int, int | None]:
+    """Return (start_page, total_pages_api)."""
+    total_pages_api: int | None = None
+
+    if options.worker_id is not None:
+        range_start = options.start_page or 1
+        range_end = options.end_page
+        last_done = get_worker_progress(conn, options.worker_id)
+        if last_done > 0 and range_end is not None and last_done >= range_end:
+            return range_end + 1, total_pages_api
+        if last_done > 0:
+            return max(range_start, last_done + 1), total_pages_api
+        return range_start, total_pages_api
+
+    if not options.all_mode:
+        return options.start_page or 1, total_pages_api
+
+    if options.reset:
+        reset_scrape_state(conn)
+        return options.start_page or 1, None
+
+    if options.start_page is not None:
+        return options.start_page, None
+
+    if not options.resume:
+        return 1, None
+
+    state = get_scrape_state(conn)
+    last_done = state.get("last_completed_page", 0)
+    total_known = state.get("total_pages")
+    if last_done > 0 and total_known and last_done >= total_known:
+        return total_known + 1, total_known
+    if last_done > 0:
+        print(
+            f"Resuming from page {last_done + 1} "
+            f"(last completed: {last_done}"
+            f"{f' / {total_known}' if total_known else ''})."
+        )
+        return last_done + 1, total_known
+    return 1, total_known
+
+
+def run_list_scrape(
+    options: ListScrapeOptions,
+    *,
+    shared_progress=None,
+    log_lock=None,
+) -> dict:
+    config_path = Path(options.config_path)
+    app_config = load_config(config_path)
+    use_pretty = options.use_pretty and options.worker_id is None
+    is_worker = options.worker_id is not None
+    enable_colors(True)
+    ui = ScrapeConsole(enabled=use_pretty, live=use_pretty and options.live_ui)
+    wcon: WorkerConsole | None = None
+
+    if options.start_delay > 0:
+        time.sleep(options.start_delay)
+
+    debug_dir = SCRIPT_DIR / "debug_captcha" if options.debug else None
+    worker_id = options.worker_id
+
+    report_worker_progress(
+        shared_progress,
+        log_lock,
+        worker_id,
+        status="starting",
+        activity="loading OCR" if not options.manual else "manual",
+    )
+
+    if options.manual:
+        ocr = None
+        if use_pretty:
+            ui.line(paint("Manual captcha mode.", C.YELLOW))
+        else:
+            worker_log(worker_id, "Manual captcha mode.", wcon)
+    else:
+        if use_pretty:
+            ui.line(paint("Loading OCR (ddddocr)...", C.DIM))
+        ocr = CaptchaOcr()
+        if use_pretty:
+            ui.line(paint("OCR ready.", C.GREEN))
+
+    learner = CaptchaLearner(
+        learn_path_for_worker(worker_id),
+        enabled=not options.no_learn,
+    )
+
+    client = EnamadClient()
+    total_saved = 0
+    pages_fetched = 0
+    run_id: int | None = None
+    total_pages_api: int | None = None
+    stats = ScrapeStats(start_page=options.start_page or 1)
+
+    try:
+        with mysql_connection(app_config.mysql) as conn:
+            start_page, total_pages_api = resolve_list_scrape_start(conn, options)
+            end_page = options.end_page
+            if options.all_mode and end_page is None:
+                bounded = False
+            else:
+                bounded = True
+                if end_page is None:
+                    end_page = start_page
+
+            if options.all_mode and total_pages_api and start_page > total_pages_api:
+                worker_log(
+                    options.worker_id,
+                    f"Already complete ({total_pages_api}/{total_pages_api} pages).",
+                )
+                return {
+                    "worker_id": options.worker_id,
+                    "status": "completed",
+                    "pages_fetched": 0,
+                    "records_saved": 0,
+                    "run_id": None,
+                    "last_page": total_pages_api,
+                }
+
+            if start_page > (end_page if bounded else start_page):
+                if wcon:
+                    wcon.info("Range already complete.")
+                else:
+                    worker_log(worker_id, "Range already complete.", wcon)
+                return {
+                    "worker_id": worker_id,
+                    "status": "completed",
+                    "pages_fetched": 0,
+                    "records_saved": 0,
+                    "run_id": None,
+                    "last_page": end_page if bounded else start_page - 1,
+                }
+
+            if is_worker and bounded and end_page is not None:
+                wcon = WorkerConsole(
+                    worker_id,
+                    log_lock,
+                    quiet=not options.verbose_worker,
+                    silent=shared_progress is not None and not options.verbose_worker,
+                    range_end=end_page,
+                )
+                if shared_progress is None:
+                    wcon.info(f"range {start_page}-{end_page}")
+            elif use_pretty and options.all_mode:
+                ui.banner("Enamad Scraper — full run")
+                ui.line(paint(f"MySQL: {app_config.mysql.database}", C.DIM))
+            elif bounded and end_page is not None:
+                msg = (
+                    f"Scraping pages {start_page} to {end_page} "
+                    f"-> MySQL ({app_config.mysql.database})"
+                )
+                if use_pretty:
+                    ui.line(paint(msg, C.CYAN))
+                else:
+                    worker_log(worker_id, msg)
+
+            page = start_page
+            stats.start_page = start_page
+            stats.total_pages = total_pages_api
+
+            pages_requested = 0
+            if bounded and end_page is not None:
+                pages_requested = max(0, end_page - start_page + 1)
+
+            notes = "all pages" if options.all_mode else ("manual" if options.manual else "ddddocr")
+            if worker_id is not None:
+                notes = f"worker {worker_id}: {notes}"
+
+            run_id = start_scrape_run(
+                conn,
+                start_page=start_page,
+                pages_requested=pages_requested,
+                notes=notes,
+            )
+            commit_connection(conn)
+
+            if use_pretty:
+                ui.refresh_sticky(stats, learner.summary() if learner.enabled else "")
+
+            report_worker_progress(
+                shared_progress,
+                log_lock,
+                worker_id,
+                status="running",
+                activity="scraping",
+                last_page=start_page - 1,
+                pages_done=0,
+                records=0,
+            )
+
+            while True:
+                if total_pages_api is not None and page > total_pages_api:
+                    break
+                if bounded and end_page is not None and page > end_page:
+                    break
+
+                chunk_end = end_page if bounded else None
+                if use_pretty:
+                    ui.begin_chunk(page, total_pages_api, stats)
+                elif wcon:
+                    report_worker_progress(
+                        shared_progress,
+                        log_lock,
+                        worker_id,
+                        activity="captcha",
+                        last_page=page,
+                    )
+
+                chunk, total_pages_api = fetch_page_chunk(
+                    client,
+                    page,
+                    chunk_end,
+                    ocr,
+                    options.manual,
+                    options.retries,
+                    debug_dir,
+                    learner=learner,
+                    reuse_captcha=not options.no_chunk,
+                    ui=ui if use_pretty else None,
+                    stats=stats if use_pretty else None,
+                    max_chunk_pages=options.max_pages_per_chunk,
+                    fast_ocr=options.fast_ocr,
+                    wcon=wcon,
+                )
+                if not chunk:
+                    raise RuntimeError(f"صفحه {page}: هیچ رکوردی دریافت نشد")
+
+                chunk_pages = [p for p, _ in chunk]
+                chunk_records = 0
+                last_chunk_page = chunk[-1][0]
+                for chunk_page, rows in chunk:
+                    if options.with_details:
+                        enriched_rows = []
+                        for row in rows:
+                            enriched_rows.append(maybe_enrich_row(client, row, True))
+                            time.sleep(max(0.0, options.delay * 0.3))
+                        rows = enriched_rows
+
+                    saved = save_domains(conn, rows, scrape_run_id=run_id)
+                    total_saved += saved
+                    pages_fetched += 1
+                    chunk_records += len(rows)
+
+                    if total_pages_api is not None and chunk_page >= total_pages_api:
+                        if wcon:
+                            wcon.info(f"Reached last available page ({total_pages_api}).")
+                        page = chunk_page + 1
+                        break
+
+                    if bounded and end_page is not None and chunk_page >= end_page:
+                        page = chunk_page + 1
+                        break
+                else:
+                    page = last_chunk_page + 1
+
+                if options.worker_id is not None:
+                    update_worker_progress(conn, options.worker_id, last_chunk_page)
+                elif options.all_mode:
+                    update_scrape_progress(conn, last_chunk_page, total_pages_api)
+                commit_connection(conn)
+
+                if wcon and shared_progress is None:
+                    wcon.chunk_done(chunk_pages, chunk_records, total_saved)
+                lo, hi = min(chunk_pages), max(chunk_pages)
+                report_worker_progress(
+                    shared_progress,
+                    log_lock,
+                    worker_id,
+                    last_page=last_chunk_page,
+                    pages_done=pages_fetched,
+                    records=total_saved,
+                    status="running",
+                    activity=f"chunk {lo}-{hi}",
+                )
+
+                stats.total_pages = total_pages_api
+                stats.note_chunk(chunk_pages, chunk_records)
+                if use_pretty:
+                    learner_line = learner.summary() if learner.enabled else ""
+                    ui.end_chunk(chunk_pages, chunk_records, total_saved, stats, learner_line)
+
+                if total_pages_api is not None and page > total_pages_api:
+                    break
+                if bounded and end_page is not None and page > end_page:
+                    break
+
+                time.sleep(max(0.0, options.delay))
+
+            finish_scrape_run(
+                conn,
+                run_id=run_id,
+                pages_fetched=pages_fetched,
+                records_saved=total_saved,
+                status="completed",
+            )
+    except Exception as exc:
+        if run_id is not None:
+            try:
+                with mysql_connection(app_config.mysql) as conn:
+                    finish_scrape_run(
+                        conn,
+                        run_id=run_id,
+                        pages_fetched=pages_fetched,
+                        records_saved=total_saved,
+                        status="failed",
+                        notes=str(exc),
+                    )
+            except Exception:
+                pass
+        if worker_id is not None:
+            report_worker_progress(
+                shared_progress,
+                log_lock,
+                worker_id,
+                status="failed",
+                activity="failed",
+            )
+            if wcon:
+                wcon.error(str(exc))
+            return {
+                "worker_id": worker_id,
+                "status": "failed",
+                "pages_fetched": pages_fetched,
+                "records_saved": total_saved,
+                "run_id": run_id,
+                "last_page": page if "page" in locals() else options.start_page,
+                "error": str(exc),
+                "pid": os.getpid(),
+            }
+        raise
+    finally:
+        cleanup_captcha_images()
+        if learner.enabled:
+            learner.save()
+
+    if use_pretty:
+        ui.done(total_saved, run_id)
+        if learner.enabled:
+            ui.line(paint(f"[learn] {learner.summary()}", C.MAGENTA, C.DIM))
+    else:
+        if wcon:
+            wcon.success(f"Done — {total_saved} records (run_id={run_id})")
+        else:
+            print(f"Done. {total_saved} records stored in MySQL (run_id={run_id}).")
+        if learner.enabled and not is_worker:
+            print(learner.summary())
+
+    report_worker_progress(
+        shared_progress,
+        log_lock,
+        worker_id,
+        status="completed",
+        activity="done",
+        pages_done=pages_fetched,
+        records=total_saved,
+    )
+
+    return {
+        "worker_id": worker_id,
+        "status": "completed",
+        "pages_fetched": pages_fetched,
+        "records_saved": total_saved,
+        "run_id": run_id,
+        "last_page": last_chunk_page if "last_chunk_page" in locals() else start_page,
+        "pid": os.getpid(),
+    }
+
+
+def _parallel_worker(payload: dict) -> dict:
+    configure_console_encoding()
+    shared_progress = payload.pop("shared_progress", None)
+    log_lock = payload.pop("log_lock", None)
+    options = ListScrapeOptions(**payload)
+    worker_pid = os.getpid()
+    report_worker_progress(
+        shared_progress,
+        log_lock,
+        options.worker_id,
+        status="spawned",
+        activity="loading OCR",
+        pid=worker_pid,
+    )
+    result = run_list_scrape(
+        options,
+        shared_progress=shared_progress,
+        log_lock=log_lock,
+    )
+    result["pid"] = worker_pid
+    return result
+
+
+def run_parallel_scrape(
+    args: argparse.Namespace,
+    app_config,
+    config_path: Path,
+    max_pages_per_chunk: int,
+) -> int:
+    if args.manual:
+        print("Parallel mode does not support --manual.", file=sys.stderr)
+        return 1
+    if args.with_details:
+        print("Parallel mode does not support --with-details.", file=sys.stderr)
+        return 1
+    if not args.all and args.end_page is None:
+        print("Parallel mode requires --all or --end-page.", file=sys.stderr)
+        return 1
+
+    delay = args.delay if args.delay is not None else app_config.scraper.delay
+    retries = args.retries if args.retries is not None else app_config.scraper.retries
+    workers = args.workers
+
+    with mysql_connection(app_config.mysql) as conn:
+        if args.reset:
+            reset_scrape_state(conn)
+            commit_connection(conn)
+            print("Progress reset. Starting parallel scrape from page 1.")
+
+        state = get_scrape_state(conn)
+        total_pages = state.get("total_pages")
+        start_page = args.start_page or 1
+
+        if args.all:
+            if args.start_page is None and not args.reset:
+                last_done = state.get("last_completed_page", 0)
+                if last_done > 0:
+                    start_page = last_done + 1
+            if total_pages and start_page > total_pages:
+                print(f"Already complete ({total_pages}/{total_pages} pages).")
+                return 0
+            end_page = total_pages
+            if end_page is None:
+                print(
+                    "Total page count unknown. Run a single-worker scrape first "
+                    "to discover total_pages, or pass --end-page.",
+                    file=sys.stderr,
+                )
+                return 1
+        else:
+            end_page = args.end_page
+            if end_page is None or end_page < start_page:
+                print("Invalid page range for parallel scrape.", file=sys.stderr)
+                return 1
+
+    ranges = split_page_ranges(start_page, end_page, workers)
+    if not ranges:
+        print("Nothing to scrape.", file=sys.stderr)
+        return 1
+
+    enable_colors(True)
+    worker_count = len(ranges)
+    ParallelDashboard.print_plan(
+        start_page,
+        end_page,
+        ranges,
+        worker_count=worker_count,
+    )
+
+    manager = Manager()
+    shared = manager.dict()
+    log_lock = manager.Lock()
+    active_ranges: list[tuple[int, int, int]] = []
+    payloads: list[dict] = []
+
+    for index, (lo, hi) in enumerate(ranges):
+        worker_last = 0
+        with mysql_connection(app_config.mysql) as conn:
+            worker_last = get_worker_progress(conn, index)
+        worker_start = max(lo, worker_last + 1) if worker_last > 0 else lo
+        if worker_start > hi:
+            print(paint(f"  W{index} already complete ({lo}-{hi})", C.DIM))
+            continue
+
+        active_ranges.append((index, lo, hi))
+        shared[str(index)] = {
+            "range_lo": lo,
+            "range_hi": hi,
+            "last_page": worker_start - 1,
+            "pages_done": 0,
+            "records": 0,
+            "status": "pending",
+            "activity": "queued",
+        }
+
+        options = ListScrapeOptions(
+            config_path=str(config_path),
+            start_page=worker_start,
+            end_page=hi,
+            all_mode=False,
+            delay=delay,
+            retries=retries,
+            max_pages_per_chunk=max_pages_per_chunk,
+            manual=False,
+            fast_ocr=args.fast_ocr,
+            no_chunk=args.no_chunk,
+            with_details=False,
+            no_learn=args.no_learn,
+            debug=args.debug,
+            worker_id=index,
+            use_pretty=False,
+            live_ui=False,
+            resume=False,
+            reset=False,
+            start_delay=index * max(0.0, args.worker_stagger),
+            verbose_worker=args.verbose_workers,
+        )
+        payload = dict(options.__dict__)
+        payload["shared_progress"] = shared
+        payload["log_lock"] = log_lock
+        payloads.append(payload)
+
+    if not payloads:
+        print("All worker ranges already complete.")
+        if args.all and total_pages:
+            with mysql_connection(app_config.mysql) as conn:
+                update_scrape_progress(conn, total_pages, total_pages)
+        return 0
+
+    dashboard = ParallelDashboard(
+        active_ranges,
+        shared,
+        log_lock,
+        global_start=start_page,
+        global_end=end_page,
+    )
+    stop_refresh = threading.Event()
+
+    def refresh_dashboard() -> None:
+        while not stop_refresh.wait(1.5):
+            dashboard.render()
+
+    refresh_thread = threading.Thread(target=refresh_dashboard, daemon=True)
+    refresh_thread.start()
+    dashboard.render()
+
+    results: list[dict] = []
+    failed = False
+    try:
+        with ProcessPoolExecutor(max_workers=len(payloads)) as pool:
+            futures = {pool.submit(_parallel_worker, payload): payload for payload in payloads}
+            for future in as_completed(futures):
+                result = future.result()
+                results.append(result)
+                if result.get("status") != "completed":
+                    failed = True
+    finally:
+        stop_refresh.set()
+        refresh_thread.join(timeout=3.0)
+        dashboard.finish(results)
+
+    total_pages_fetched = sum(int(item.get("pages_fetched") or 0) for item in results)
+    total_records = sum(int(item.get("records_saved") or 0) for item in results)
+
+    if not failed and args.all and end_page is not None:
+        with mysql_connection(app_config.mysql) as conn:
+            update_scrape_progress(conn, end_page, end_page)
+
+    print(
+        paint(
+            f"\nParallel done. {len(results)} workers, {total_pages_fetched} pages, "
+            f"{total_records} records.",
+            C.GREEN,
+            C.BOLD,
+        )
+    )
+    return 1 if failed else 0
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Scrape Enamad domain holders into MySQL")
     parser.add_argument(
@@ -969,6 +1675,11 @@ def parse_args() -> argparse.Namespace:
         "--init-db",
         action="store_true",
         help="Create database and tables from schema.sql",
+    )
+    parser.add_argument(
+        "--fix-domains",
+        action="store_true",
+        help="Decode URL-encoded domains already stored in MySQL (e.g. %%D9%%BE...)",
     )
     parser.add_argument(
         "--all",
@@ -986,6 +1697,18 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Start from page N (overrides auto-resume)",
+    )
+    parser.add_argument(
+        "--end-page",
+        type=int,
+        default=None,
+        help="Stop after page N (for parallel workers or bounded runs)",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of parallel page-range workers (requires --all or --end-page)",
     )
     parser.add_argument(
         "--delay",
@@ -1055,6 +1778,17 @@ def parse_args() -> argparse.Namespace:
         help="Fetch one page per captcha (disable captcha reuse across pages)",
     )
     parser.add_argument(
+        "--chunk-pages",
+        type=int,
+        default=None,
+        help=f"Pages per captcha when reusing (default: {DEFAULT_CHUNK_PAGES})",
+    )
+    parser.add_argument(
+        "--fast-ocr",
+        action="store_true",
+        help="Lighter captcha OCR (fewer image variants, faster but slightly less accurate)",
+    )
+    parser.add_argument(
         "--no-learn",
         action="store_true",
         help="Disable captcha learning cache (default: learn from solved captchas)",
@@ -1064,15 +1798,23 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Save captcha images to debug_captcha/",
     )
+    parser.add_argument(
+        "--verbose-workers",
+        action="store_true",
+        help="With --workers: show captcha/reuse logs from each worker",
+    )
+    parser.add_argument(
+        "--worker-stagger",
+        type=float,
+        default=0.0,
+        help="Delay between worker starts in seconds (default: 0)",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     configure_console_encoding()
     args = parse_args()
-    use_pretty = not args.plain
-    enable_colors(use_pretty)
-    ui = ScrapeConsole(enabled=use_pretty, live=use_pretty and not args.no_live)
     config_path = Path(args.config)
     if not config_path.is_absolute():
         config_path = SCRIPT_DIR / config_path
@@ -1084,224 +1826,72 @@ def main() -> int:
         print(f"Database ready: {app_config.mysql.database}")
         return 0
 
+    if args.fix_domains:
+        app_config = load_config(config_path)
+        with mysql_connection(app_config.mysql) as conn:
+            fixed = fix_encoded_domains(conn)
+        print(f"Fixed {fixed} URL-encoded domain(s) in {app_config.mysql.database}.")
+        return 0
+
     app_config = load_config(config_path)
 
     if args.search or args.search_file:
         return run_search(args, app_config)
+
+    if args.workers < 1:
+        print("workers must be at least 1.", file=sys.stderr)
+        return 1
+
+    chunk_pages = args.chunk_pages if args.chunk_pages is not None else DEFAULT_CHUNK_PAGES
+    if chunk_pages < 1:
+        print("chunk-pages must be at least 1.", file=sys.stderr)
+        return 1
+    max_pages_per_chunk = chunk_pages
+
+    if args.workers > 1:
+        return run_parallel_scrape(args, app_config, config_path, max_pages_per_chunk)
 
     delay = args.delay if args.delay is not None else app_config.scraper.delay
     retries = args.retries if args.retries is not None else app_config.scraper.retries
 
     if args.all:
         pages_to_fetch = 0
+        end_page = args.end_page
+        all_mode = True
     else:
         pages_to_fetch = args.pages if args.pages is not None else 1
         if pages_to_fetch < 1:
             print("Page count must be at least 1.", file=sys.stderr)
             return 1
+        start_page = args.start_page or 1
+        end_page = args.end_page if args.end_page is not None else start_page + pages_to_fetch - 1
+        all_mode = False
 
-    debug_dir = SCRIPT_DIR / "debug_captcha" if args.debug else None
-
-    if args.manual:
-        ocr = None
-        ui.line(paint("Manual captcha mode.", C.YELLOW) if use_pretty else "Manual captcha mode.")
-    else:
-        ui.line(paint("Loading OCR (ddddocr)...", C.DIM) if use_pretty else "Loading OCR (ddddocr)...")
-        ocr = CaptchaOcr()
-        ui.line(paint("OCR ready.", C.GREEN) if use_pretty else "OCR ready.")
-
-    learner = CaptchaLearner(CAPTCHA_LEARN_PATH, enabled=not args.no_learn)
-    if learner.enabled:
-        ui.line(learner.summary() if not use_pretty else paint(f"[learn] {learner.summary()}", C.MAGENTA, C.DIM))
-
-    client = EnamadClient()
-    total_saved = 0
-    pages_fetched = 0
-    run_id: int | None = None
-    total_pages_api: int | None = None
-    start_page = args.start_page or 1
-    stats = ScrapeStats(start_page=start_page)
-
-    try:
-        with mysql_connection(app_config.mysql) as conn:
-            if args.all:
-                if args.reset:
-                    reset_scrape_state(conn)
-                    commit_connection(conn)
-                    print("Progress reset. Starting from page 1.")
-                    start_page = args.start_page or 1
-                elif args.start_page is not None:
-                    start_page = args.start_page
-                    print(f"Starting from page {start_page} (--start-page).")
-                else:
-                    state = get_scrape_state(conn)
-                    last_done = state.get("last_completed_page", 0)
-                    total_known = state.get("total_pages")
-                    if last_done > 0 and total_known and last_done >= total_known:
-                        print(
-                            f"Already complete ({last_done}/{total_known} pages). "
-                            "Use --reset to scrape from the beginning."
-                        )
-                        return 0
-                    if last_done > 0:
-                        start_page = last_done + 1
-                        total_pages_api = total_known
-                        print(
-                            f"Resuming from page {start_page} "
-                            f"(last completed: {last_done}"
-                            f"{f' / {total_known}' if total_known else ''})."
-                        )
-                    else:
-                        start_page = 1
-                        print("No saved progress. Starting from page 1.")
-
-            end_page = None if args.all else start_page + pages_to_fetch - 1
-
-            if args.all:
-                ui.banner("Enamad Scraper — full run")
-                ui.line(
-                    paint(f"MySQL: {app_config.mysql.database}", C.DIM)
-                    if use_pretty
-                    else f"Scraping ALL pages from {start_page} -> MySQL ({app_config.mysql.database})"
-                )
-            else:
-                msg = f"Scraping pages {start_page} to {end_page} -> MySQL ({app_config.mysql.database})"
-                ui.line(paint(msg, C.CYAN) if use_pretty else msg)
-
-            page = start_page
-            stats.start_page = start_page
-            stats.total_pages = total_pages_api
-
-            run_id = start_scrape_run(
-                conn,
-                start_page=start_page,
-                pages_requested=pages_to_fetch,
-                notes="all pages" if args.all else ("manual" if args.manual else "ddddocr"),
-            )
-            commit_connection(conn)
-
-            if use_pretty:
-                ui.refresh_sticky(stats, learner.summary() if learner.enabled else "")
-
-            while True:
-                if total_pages_api is not None and page > total_pages_api:
-                    break
-                if not args.all and end_page is not None and page > end_page:
-                    break
-
-                if use_pretty:
-                    ui.begin_chunk(page, total_pages_api, stats)
-                else:
-                    label = f"Page {page}"
-                    if total_pages_api:
-                        label += f" / {total_pages_api}"
-                    print(f"{label}...")
-
-                chunk, total_pages_api = fetch_page_chunk(
-                    client,
-                    page,
-                    end_page if not args.all else None,
-                    ocr,
-                    args.manual,
-                    retries,
-                    debug_dir,
-                    learner=learner,
-                    reuse_captcha=not args.no_chunk,
-                    ui=ui if use_pretty else None,
-                    stats=stats if use_pretty else None,
-                )
-                if not chunk:
-                    raise RuntimeError(f"صفحه {page}: هیچ رکوردی دریافت نشد")
-
-                chunk_pages = [p for p, _ in chunk]
-                if not use_pretty and len(chunk) > 1:
-                    print(f"  ✓ {len(chunk)} pages with one captcha: {', '.join(str(p) for p in chunk_pages)}")
-
-                chunk_records = 0
-                for chunk_page, rows in chunk:
-                    if args.with_details:
-                        enriched_rows = []
-                        for row in rows:
-                            enriched_rows.append(maybe_enrich_row(client, row, True))
-                            time.sleep(max(0.0, delay * 0.3))
-                        rows = enriched_rows
-
-                    saved = save_domains(conn, rows, scrape_run_id=run_id)
-                    total_saved += saved
-                    pages_fetched += 1
-                    chunk_records += len(rows)
-
-                    if args.all:
-                        update_scrape_progress(conn, chunk_page, total_pages_api)
-
-                    commit_connection(conn)
-                    if not use_pretty:
-                        print(
-                            f"  -> page {chunk_page}: {len(rows)} records "
-                            f"(total: {total_saved}, committed)"
-                        )
-
-                    if total_pages_api is not None and chunk_page >= total_pages_api:
-                        print(f"Reached last available page ({total_pages_api}).")
-                        page = chunk_page + 1
-                        break
-
-                    if not args.all and end_page is not None and chunk_page >= end_page:
-                        page = chunk_page + 1
-                        break
-                else:
-                    page = chunk[-1][0] + 1
-
-                stats.total_pages = total_pages_api
-                stats.note_chunk(chunk_pages, chunk_records)
-                if use_pretty:
-                    learner_line = learner.summary() if learner.enabled else ""
-                    ui.end_chunk(chunk_pages, chunk_records, total_saved, stats, learner_line)
-
-                if total_pages_api is not None and page > total_pages_api:
-                    break
-                if not args.all and end_page is not None and page > end_page:
-                    break
-
-                time.sleep(max(0.0, delay))
-
-            finish_scrape_run(
-                conn,
-                run_id=run_id,
-                pages_fetched=pages_fetched,
-                records_saved=total_saved,
-                status="completed",
-            )
-    except Exception as exc:
-        if run_id is not None:
-            try:
-                with mysql_connection(app_config.mysql) as conn:
-                    finish_scrape_run(
-                        conn,
-                        run_id=run_id,
-                        pages_fetched=pages_fetched,
-                        records_saved=total_saved,
-                        status="failed",
-                        notes=str(exc),
-                    )
-            except Exception:
-                pass
-        raise
-    finally:
-        cleanup_captcha_images()
-        if learner.enabled:
-            learner.save()
-
-    if use_pretty:
-        ui.done(total_saved, run_id)
-        if learner.enabled:
-            ui.line(paint(f"[learn] {learner.summary()}", C.MAGENTA, C.DIM))
-    else:
-        print(f"Done. {total_saved} records stored in MySQL (run_id={run_id}).")
-        if learner.enabled:
-            print(learner.summary())
+    options = ListScrapeOptions(
+        config_path=str(config_path),
+        start_page=args.start_page,
+        end_page=end_page if not args.all else args.end_page,
+        all_mode=all_mode,
+        delay=delay,
+        retries=retries,
+        max_pages_per_chunk=max_pages_per_chunk,
+        manual=args.manual,
+        fast_ocr=args.fast_ocr,
+        no_chunk=args.no_chunk,
+        with_details=args.with_details,
+        no_learn=args.no_learn,
+        debug=args.debug,
+        use_pretty=not args.plain,
+        live_ui=not args.plain and not args.no_live,
+        resume=True,
+        reset=args.reset,
+    )
+    run_list_scrape(options)
     return 0
 
 
 if __name__ == "__main__":
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     raise SystemExit(main())

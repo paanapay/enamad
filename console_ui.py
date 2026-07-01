@@ -350,3 +350,290 @@ class ScrapeConsole:
             + paint(f"{fmt_int(total_saved)} records", C.GREEN)
             + paint(f"  (run_id={run_id})", C.DIM)
         )
+
+
+WORKER_COLORS = (C.CYAN, C.GREEN, C.YELLOW, C.MAGENTA, C.BLUE)
+
+
+class WorkerConsole:
+    """Colored, lock-safe logging for parallel worker processes."""
+
+    def __init__(
+        self,
+        worker_id: int,
+        lock=None,
+        *,
+        quiet: bool = True,
+        silent: bool = False,
+        range_end: int | None = None,
+    ) -> None:
+        self.worker_id = worker_id
+        self.lock = lock
+        self.quiet = quiet
+        self.silent = silent
+        self.range_end = range_end
+
+    def badge(self) -> str:
+        color = WORKER_COLORS[self.worker_id % len(WORKER_COLORS)]
+        return paint(f"W{self.worker_id}", color, C.BOLD)
+
+    def _emit(self, text: str) -> None:
+        if self.lock is not None:
+            with self.lock:
+                self._write_unlocked(text)
+        else:
+            self._write_unlocked(text)
+
+    def _write_unlocked(self, text: str) -> None:
+        try:
+            print(text, flush=True)
+        except UnicodeEncodeError:
+            encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+            sys.stdout.buffer.write((text + "\n").encode(encoding, errors="replace"))
+            sys.stdout.buffer.flush()
+
+    def _line(self, body: str, *, force: bool = False) -> None:
+        if self.silent and not force:
+            return
+        self._emit(f"  {paint('|', C.DIM)} {self.badge()} {paint('|', C.DIM)} {body}")
+
+    def info(self, message: str) -> None:
+        self._line(paint(message, C.WHITE))
+
+    def dim(self, message: str) -> None:
+        if self.quiet:
+            return
+        self._line(paint(message, C.DIM))
+
+    def warn(self, message: str) -> None:
+        self._line(paint(message, C.YELLOW), force=True)
+
+    def error(self, message: str) -> None:
+        self._line(paint(message, C.RED), force=True)
+
+    def success(self, message: str) -> None:
+        self._line(paint(message, C.GREEN))
+
+    def page_label(self, page: int, range_lo: int) -> str:
+        if self.range_end is not None:
+            return f"page {fmt_int(page)} / {fmt_int(self.range_end)}"
+        return f"page {fmt_int(page)}"
+
+    def chunk_start(self, page: int, range_lo: int) -> None:
+        self.info(f"{self.page_label(page, range_lo)}  {paint('...', C.DIM)}")
+
+    def captcha_guesses(self, preview: str, learned: str = "") -> None:
+        if self.quiet:
+            return
+        self.dim(f"captcha{learned}: {preview}")
+
+    def captcha_try(self, index: int, code: str) -> None:
+        if self.quiet:
+            return
+        self.dim(f"try {index}: {code}")
+
+    def captcha_fail(self, attempt: int, max_retries: int, error: str) -> None:
+        self.warn(f"captcha {attempt}/{max_retries}: {error}")
+
+    def captcha_reuse(self, page: int) -> None:
+        if self.quiet:
+            return
+        self.dim(f"reuse captcha -> {fmt_int(page)}")
+
+    def chunk_done(self, pages: list[int], records_added: int, total_saved: int) -> None:
+        if not pages:
+            return
+        lo, hi = min(pages), max(pages)
+        page_range = str(lo) if lo == hi else f"{lo}-{hi}"
+        self.success(
+            paint(f"pages {page_range}", C.GREEN, C.BOLD)
+            + paint(f"  +{records_added} rows", C.WHITE)
+            + paint(f"  total {fmt_int(total_saved)}", C.DIM)
+        )
+
+
+class ParallelDashboard:
+    """Live multi-worker status panel (parent process only)."""
+
+    def __init__(
+        self,
+        worker_ranges: list[tuple[int, int, int]],
+        shared,
+        lock,
+        *,
+        global_start: int,
+        global_end: int,
+    ) -> None:
+        # (worker_id, range_lo, range_hi)
+        self.worker_ranges = worker_ranges
+        self.shared = shared
+        self.lock = lock
+        self.global_start = global_start
+        self.global_end = global_end
+        self.started = time.time()
+        self._panel_lines = 0
+        self._live = sys.stdout.isatty()
+
+    @staticmethod
+    def print_plan(
+        global_start: int,
+        global_end: int,
+        ranges: list[tuple[int, int]],
+        *,
+        worker_count: int | None = None,
+    ) -> None:
+        border = "=" * 58
+        print(paint(f"+{border}+", C.CYAN, C.BOLD))
+        title = f"Enamad Parallel Scraper  pages {fmt_int(global_start)}-{fmt_int(global_end)}"
+        print(paint(f"|  {title:<56}|", C.CYAN, C.BOLD))
+        print(paint(f"+{border}+", C.CYAN, C.BOLD))
+        for index, (lo, hi) in enumerate(ranges):
+            color = WORKER_COLORS[index % len(WORKER_COLORS)]
+            count = hi - lo + 1
+            line = (
+                f"  {paint(f'W{index}', color, C.BOLD)}"
+                f"  {fmt_int(lo)} -> {fmt_int(hi)}"
+                f"  ({fmt_int(count)} pages)"
+            )
+            print(line)
+        print(paint(f"+{border}+", C.CYAN, C.BOLD))
+        count = worker_count if worker_count is not None else len(ranges)
+        if sys.platform == "win32":
+            print(
+                paint(
+                    f"  Windows spawn: {count} workers = {count} separate python.exe processes",
+                    C.DIM,
+                )
+            )
+            print(
+                paint(
+                    "  Task Manager -> Details: look for multiple python.exe with different PIDs",
+                    C.DIM,
+                )
+            )
+        else:
+            print(paint(f"  {count} worker processes (fork/spawn)", C.DIM))
+        print(paint("  Dashboard refreshes every ~1.5s — different page numbers = parallel OK", C.DIM))
+        print()
+
+    def _snapshot(self) -> list[dict]:
+        rows: list[dict] = []
+        with self.lock:
+            for worker_id, range_lo, range_hi in self.worker_ranges:
+                raw = self.shared.get(str(worker_id), {})
+                rows.append(
+                    {
+                        "worker_id": worker_id,
+                        "range_lo": range_lo,
+                        "range_hi": range_hi,
+                        "last_page": int(raw.get("last_page", range_lo - 1)),
+                        "pages_done": int(raw.get("pages_done", 0)),
+                        "records": int(raw.get("records", 0)),
+                        "status": str(raw.get("status", "starting")),
+                        "activity": str(raw.get("activity", "")),
+                        "pid": int(raw.get("pid", 0)),
+                    }
+                )
+        return rows
+
+    def _active_process_count(self, rows: list[dict]) -> int:
+        pids = {row["pid"] for row in rows if row.get("pid", 0) > 0}
+        return len(pids)
+
+    def render(self) -> None:
+        rows = self._snapshot()
+        elapsed = max(0.001, time.time() - self.started)
+        total_pages_done = sum(row["pages_done"] for row in rows)
+        total_records = sum(row["records"] for row in rows)
+        speed = total_pages_done * 60 / elapsed
+        active_procs = self._active_process_count(rows)
+
+        lines: list[str] = []
+        w = 56
+        lines.append(paint("+" + "-" * w + "+", C.CYAN))
+        proc_label = f"{active_procs}/{len(rows)} proc"
+        lines.append(
+            paint("| ", C.CYAN)
+            + paint("WORKERS", C.CYAN, C.BOLD)
+            + paint(
+                f"  {proc_label}  {fmt_duration(elapsed)}  {speed:.0f} pg/min  {fmt_int(total_records)} rows",
+                C.DIM,
+            )
+            + paint(" |", C.CYAN)
+        )
+        lines.append(paint("+" + "-" * w + "+", C.CYAN))
+
+        for row in rows:
+            wid = row["worker_id"]
+            color = WORKER_COLORS[wid % len(WORKER_COLORS)]
+            span = row["range_hi"] - row["range_lo"] + 1
+            done = row["pages_done"]
+            ratio = done / span if span > 0 else 0.0
+            bar = progress_bar(ratio, width=14)
+            page_text = fmt_int(row["last_page"]) if row["last_page"] >= row["range_lo"] else "-"
+            status = row["activity"] or row["status"]
+            if len(status) > 10:
+                status = status[:9] + "…"
+            pid_text = str(row["pid"]) if row.get("pid", 0) > 0 else "…"
+            line = (
+                paint("| ", C.CYAN)
+                + paint(f"W{wid}", color, C.BOLD)
+                + paint(f" p{pid_text[-5:]}", C.DIM)
+                + " "
+                + bar
+                + paint(f" pg{page_text}", C.WHITE)
+                + paint(f" {fmt_int(row['records'])}r", C.DIM)
+                + paint(f" {status:<10}", C.DIM)
+                + paint("|", C.CYAN)
+            )
+            lines.append(line)
+
+        global_span = max(1, self.global_end - self.global_start + 1)
+        global_done = total_pages_done
+        global_ratio = min(1.0, global_done / global_span)
+        lines.append(paint("+" + "-" * w + "+", C.CYAN))
+        lines.append(
+            paint("| ", C.CYAN)
+            + paint("Overall", C.DIM)
+            + " "
+            + progress_bar(global_ratio, width=22)
+            + paint(
+                f" {fmt_int(global_done)}/{fmt_int(global_span)} pg",
+                C.WHITE,
+            )
+            + paint(" |", C.CYAN)
+        )
+        lines.append(paint("+" + "-" * w + "+", C.CYAN))
+
+        if self._live and self._panel_lines > 0:
+            sys.stdout.write(f"\033[{self._panel_lines}A")
+        for line in lines:
+            if self._live:
+                sys.stdout.write("\033[2K")
+            print(line, flush=True)
+        self._panel_lines = len(lines)
+
+    def finish(self, results: list[dict]) -> None:
+        if self._live and self._panel_lines > 0:
+            sys.stdout.write(f"\033[{self._panel_lines}A")
+            for _ in range(self._panel_lines):
+                sys.stdout.write("\033[2K\n")
+            self._panel_lines = 0
+
+        print()
+        print(paint("Parallel summary", C.GREEN, C.BOLD))
+        for result in sorted(results, key=lambda item: int(item.get("worker_id") or 0)):
+            wid = int(result.get("worker_id") or 0)
+            color = WORKER_COLORS[wid % len(WORKER_COLORS)]
+            status = result.get("status", "?")
+            pages = int(result.get("pages_fetched") or 0)
+            records = int(result.get("records_saved") or 0)
+            style = C.GREEN if status == "completed" else C.RED
+            print(
+                f"  {paint(f'W{wid}', color, C.BOLD)}  "
+                + paint(f"{status:<10}", style)
+                + f"  pid {result.get('pid', '?')}  "
+                + f"{fmt_int(pages)} pages  {fmt_int(records)} records"
+            )
+            if status != "completed":
+                print(paint(f"         {result.get('error', '')}", C.RED, C.DIM))

@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
+from urllib.parse import unquote
 
 import pymysql
 from pymysql.cursors import DictCursor
@@ -33,6 +34,52 @@ class ScraperConfig:
 class AppConfig:
     mysql: MySQLConfig
     scraper: ScraperConfig
+
+
+def normalize_domain(domain: str) -> str:
+    """Decode URL-encoded IDN labels and strip common URL prefixes."""
+    value = (domain or "").strip()
+    if not value:
+        return ""
+
+    for _ in range(2):
+        decoded = unquote(value)
+        if decoded == value:
+            break
+        value = decoded
+
+    value = value.lower()
+    for prefix in ("https://www.", "http://www.", "https://", "http://", "www."):
+        if value.startswith(prefix):
+            value = value[len(prefix) :]
+    return value.split("/")[0].split("?")[0].split("#")[0].strip()
+
+
+def fix_encoded_domains(conn) -> int:
+    """Repair domains stored with percent-encoding (e.g. Persian IDN from API)."""
+    fixed = 0
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT id, domain
+            FROM enamad_domains
+            WHERE domain LIKE '%\\%%' ESCAPE '\\\\'
+            """
+        )
+        rows = cursor.fetchall()
+
+        for row in rows:
+            old_domain = row["domain"] or ""
+            new_domain = normalize_domain(old_domain)
+            if not new_domain or new_domain == old_domain:
+                continue
+            cursor.execute(
+                "UPDATE enamad_domains SET domain = %s WHERE id = %s",
+                (new_domain, row["id"]),
+            )
+            fixed += 1
+
+    return fixed
 
 
 def load_config(path: Path | None = None) -> AppConfig:
@@ -241,7 +288,7 @@ def save_domains(conn, rows: list[dict], scrape_run_id: int | None = None) -> in
             {
                 "enamad_id": str(row.get("enamad_id", "")),
                 "code": str(row.get("code", "")),
-                "domain": row.get("domain", ""),
+                "domain": normalize_domain(str(row.get("domain", ""))),
                 "business_name": row.get("business_name") or row.get("persian_name") or None,
                 "owner_name": row.get("owner_name") or None,
                 "business_address": row.get("business_address") or None,
@@ -383,4 +430,38 @@ def reset_scrape_state(conn) -> None:
         cursor.execute(
             "DELETE FROM scraper_state WHERE state_key IN (%s, %s)",
             (STATE_LAST_PAGE, STATE_TOTAL_PAGES),
+        )
+        cursor.execute("DELETE FROM scraper_state WHERE state_key LIKE 'parallel_w%%_last'")
+
+
+def worker_progress_key(worker_id: int) -> str:
+    return f"parallel_w{worker_id}_last"
+
+
+def get_worker_progress(conn, worker_id: int) -> int:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "SELECT state_value FROM scraper_state WHERE state_key = %s",
+            (worker_progress_key(worker_id),),
+        )
+        row = cursor.fetchone()
+    if not row:
+        return 0
+    try:
+        return int(row["state_value"])
+    except (TypeError, ValueError):
+        return 0
+
+
+def update_worker_progress(conn, worker_id: int, last_page: int) -> None:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO scraper_state (state_key, state_value)
+            VALUES (%s, %s)
+            ON DUPLICATE KEY UPDATE
+                state_value = VALUES(state_value),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (worker_progress_key(worker_id), str(last_page)),
         )
