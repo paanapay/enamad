@@ -103,6 +103,26 @@ python extract_enamad.py --pages 1
 python extract_enamad.py --pages 10
 ```
 
+### Search a single domain (site search API)
+
+Same API used by the search box on [enamad.ir](https://enamad.ir/) (`POST /Home/GetData`):
+
+```bash
+python extract_enamad.py --search digikala.com
+```
+
+Print only (no MySQL):
+
+```bash
+python extract_enamad.py --search digikala.com --no-save
+```
+
+Bulk lookup from a text file (one domain per line):
+
+```bash
+python extract_enamad.py --search-file domains.txt
+```
+
 ### Scrape **all** pages (full database)
 
 ```bash
@@ -168,6 +188,10 @@ python extract_enamad.py --config D:\path\to\config.ini --pages 5
 | Option | Description |
 |--------|-------------|
 | `--init-db` | Create database and tables, then exit |
+| `--search DOMAIN` | Look up one domain via `/Home/GetData` |
+| `--search-file FILE` | Look up many domains from a text file |
+| `--no-save` | With search: do not write to MySQL |
+| `--json` | With search: print JSON |
 | `--all` | Fetch every page until the end (auto-resume) |
 | `--reset` | Clear saved progress and start from page 1 (with `--all`) |
 | `--pages N` | Number of pages to fetch (default: 1, ignored with `--all`) |

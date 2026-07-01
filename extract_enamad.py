@@ -9,6 +9,8 @@ Setup:
   python extract_enamad.py --init-db
   python extract_enamad.py --pages 2
   python extract_enamad.py --all
+  python extract_enamad.py --search digikala.com
+  python extract_enamad.py --search-file domains.txt
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from __future__ import annotations
 import argparse
 import base64
 import io
+import json
 import os
 import re
 import sys
@@ -49,6 +52,26 @@ CAPTCHA_LEN = 5  # اینماد تقریباً همیشه ۵ کاراکتر
 BASE_URL = "https://enamad.ir/"
 PAGE_SIZE = 30
 SCRIPT_DIR = Path(__file__).resolve().parent
+
+
+def configure_console_encoding() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
+def safe_print(text: str = "") -> None:
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+        data = (text + "\n").encode(encoding, errors="replace")
+        sys.stdout.buffer.write(data)
+        sys.stdout.flush()
 
 HEADERS = {
     "Accept": "application/json, text/plain, */*",
@@ -295,7 +318,34 @@ class EnamadClient:
             self._request("GET", "DomainListForMIMT")
             self._warmed = True
         except Exception as exc:
-            print(f"  هشدار: بارگذاری اولیه صفحه ناموفق ({exc})")
+            print(f"  Warning: initial page load failed ({exc})")
+
+    def warm_home(self) -> None:
+        self._request("GET", "")
+
+    def search_domain(self, domain: str) -> dict | None:
+        """Lookup a domain via enamad.ir/Home/GetData (site search box API)."""
+        self.warm_home()
+        cleaned = clean_domain(domain)
+        response = self._request(
+            "POST",
+            "Home/GetData",
+            data={"domain": cleaned},
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-Requested-With": "XMLHttpRequest",
+            },
+        )
+        text = response.text.strip()
+        if not text or text == "null":
+            return None
+        data = response.json()
+        if not isinstance(data, dict):
+            return None
+        domain_id = int(data.get("id") or 0)
+        if domain_id <= 0:
+            return None
+        return data
 
     def refresh_captcha(self) -> tuple[str, bytes]:
         self.warm_session()
@@ -340,10 +390,150 @@ class EnamadClient:
             raise RuntimeError(f"پاسخ نامعتبر از سرور: {snippet}") from exc
 
 
+def clean_domain(domain: str) -> str:
+    value = domain.strip().lower()
+    for prefix in ("https://www.", "http://www.", "https://", "http://", "www."):
+        if value.startswith(prefix):
+            value = value[len(prefix) :]
+    return value.split("/")[0].split("?")[0].split("#")[0]
+
+
 def needs_captcha(message: str) -> bool:
     keywords = ("کپچا", "کد امنیتی", "captcha", "امنیتی", "وارد نمایید")
     lower = message.lower()
     return any(k in message or k in lower for k in keywords)
+
+
+def normalize_search_row(data: dict, queried_domain: str) -> dict:
+    domain_id = data.get("id", "")
+    code = data.get("code", "")
+    trustseal = ""
+    if domain_id and code:
+        trustseal = f"https://trustseal.enamad.ir/?id={domain_id}&code={code}"
+
+    province = data.get("statename") or data.get("stateName") or data.get("province") or ""
+    city = data.get("cityname") or data.get("cityName") or data.get("city") or ""
+    approve = data.get("approvedate") or data.get("approve_date") or ""
+    expire = data.get("expdate") or data.get("expire_date") or ""
+    rating = data.get("rating")
+    if rating is None:
+        rating = data.get("logolevel", 0)
+
+    return {
+        "enamad_id": str(domain_id),
+        "code": str(code),
+        "domain": data.get("domain_address") or queried_domain,
+        "business_name": data.get("persian_name") or data.get("nameper") or "",
+        "province": province,
+        "city": city,
+        "rating": rating or 0,
+        "approve_date": approve,
+        "expire_date": expire,
+        "trustseal_url": trustseal,
+        "source_page": None,
+        "source_row": None,
+    }
+
+
+def print_search_result(row: dict) -> None:
+    safe_print(f"  Domain:        {row['domain']}")
+    safe_print(f"  Business:      {row['business_name']}")
+    safe_print(f"  Province/City: {row['province']} / {row['city']}")
+    safe_print(f"  Rating:        {row['rating']}")
+    safe_print(f"  Approve:       {row['approve_date']}")
+    safe_print(f"  Expire:        {row['expire_date']}")
+    safe_print(f"  Trust seal:    {row['trustseal_url']}")
+
+
+def run_search(args, app_config) -> int:
+    domains: list[str] = []
+    if args.search:
+        domains.append(args.search)
+    if args.search_file:
+        path = Path(args.search_file)
+        if not path.is_absolute():
+            path = SCRIPT_DIR / path
+        domains.extend(
+            line.strip()
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        )
+
+    if not domains:
+        print("No domains to search.", file=sys.stderr)
+        return 1
+
+    delay = args.delay if args.delay is not None else app_config.scraper.delay
+    client = EnamadClient()
+    found = 0
+    saved = 0
+
+    if args.no_save:
+        for raw in domains:
+            query = clean_domain(raw)
+            print(f"Searching: {query}")
+            data = client.search_domain(query)
+            if not data:
+                print("  -> Not found in Enamad")
+                time.sleep(max(0.0, delay))
+                continue
+
+            row = normalize_search_row(data, query)
+            found += 1
+            if args.json:
+                print(json.dumps(row, ensure_ascii=False, indent=2))
+            else:
+                print_search_result(row)
+            time.sleep(max(0.0, delay))
+
+        print(f"Done. Found {found}/{len(domains)}.")
+        return 0 if found > 0 else 1
+
+    with mysql_connection(app_config.mysql) as conn:
+        run_id = start_scrape_run(
+            conn,
+            start_page=0,
+            pages_requested=0,
+            notes=f"search: {len(domains)} domain(s)",
+        )
+        commit_connection(conn)
+
+        for raw in domains:
+            query = clean_domain(raw)
+            print(f"Searching: {query}")
+            data = client.search_domain(query)
+            if not data:
+                print("  -> Not found in Enamad")
+                time.sleep(max(0.0, delay))
+                continue
+
+            row = normalize_search_row(data, query)
+            found += 1
+
+            if args.json:
+                print(json.dumps(row, ensure_ascii=False, indent=2))
+            else:
+                print_search_result(row)
+
+            save_domains(conn, [row], scrape_run_id=run_id)
+            commit_connection(conn)
+            saved += 1
+            print("  -> Saved to MySQL")
+
+            time.sleep(max(0.0, delay))
+
+        finish_scrape_run(
+            conn,
+            run_id=run_id,
+            pages_fetched=0,
+            records_saved=saved,
+            status="completed",
+            notes=f"search found {found}/{len(domains)}",
+        )
+        commit_connection(conn)
+
+    print(f"Done. Found {found}/{len(domains)}, saved {saved}.")
+    return 0 if found > 0 or args.no_save else 1
 
 
 def normalize_row(item: dict, row_number: int, page: int) -> dict:
@@ -511,6 +701,26 @@ def parse_args() -> argparse.Namespace:
         help="With --all: clear saved progress and start from page 1",
     )
     parser.add_argument(
+        "--search",
+        metavar="DOMAIN",
+        help="Look up one domain via enamad.ir/Home/GetData (site search API)",
+    )
+    parser.add_argument(
+        "--search-file",
+        metavar="FILE",
+        help="Text file with one domain per line to look up",
+    )
+    parser.add_argument(
+        "--no-save",
+        action="store_true",
+        help="With --search: print only, do not write to MySQL",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="With --search: output JSON",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Save captcha images to debug_captcha/",
@@ -519,6 +729,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    configure_console_encoding()
     args = parse_args()
     config_path = Path(args.config)
     if not config_path.is_absolute():
@@ -532,6 +743,10 @@ def main() -> int:
         return 0
 
     app_config = load_config(config_path)
+
+    if args.search or args.search_file:
+        return run_search(args, app_config)
+
     delay = args.delay if args.delay is not None else app_config.scraper.delay
     retries = args.retries if args.retries is not None else app_config.scraper.retries
 
