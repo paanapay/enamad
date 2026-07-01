@@ -36,6 +36,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from captcha_learn import CaptchaLearner
+from console_ui import ScrapeConsole, ScrapeStats, enable_colors, paint, C
 from db import (
     commit_connection,
     finish_scrape_run,
@@ -802,6 +803,8 @@ def _solve_captcha_for_page(
     max_retries: int,
     debug_dir: Path | None,
     learner: CaptchaLearner | None,
+    ui: ScrapeConsole | None = None,
+    stats: ScrapeStats | None = None,
 ) -> tuple[str, str, dict]:
     last_error = "خطای نامشخص"
 
@@ -833,17 +836,26 @@ def _solve_captcha_for_page(
                     and learner.enabled
                     and learner.lookup_solution(image_bytes)
                 ):
-                    learned = " (exact cache hit)"
-                print(f"  حدس‌ها{learned}: {preview}")
+                    learned = " (cache)"
+                if ui:
+                    ui.captcha_guesses(preview, learned)
+                else:
+                    print(f"  حدس‌ها{learned}: {preview}")
             else:
                 last_error = "OCR کپچا را تشخیص نداد"
-                print(f"  تلاش {attempt}/{max_retries}: {last_error}")
+                if ui:
+                    ui.captcha_fail(attempt, max_retries, last_error)
+                else:
+                    print(f"  تلاش {attempt}/{max_retries}: {last_error}")
                 continue
 
         tried_any = False
         for index, submit_code in enumerate(unique_captcha_guesses(guesses, max_guesses=8), start=1):
             tried_any = True
-            print(f"  try {index}: {submit_code}...", flush=True)
+            if ui:
+                ui.captcha_try(index, submit_code)
+            else:
+                print(f"  try {index}: {submit_code}...", flush=True)
             result = client.get_domain_list(page, token, submit_code)
 
             if int(result.get("result", 0)) == 1:
@@ -854,6 +866,8 @@ def _solve_captcha_for_page(
                         failed_this_image,
                         ocr_guesses,
                     )
+                if stats:
+                    stats.note_captcha_solved(len(failed_this_image))
                 return token, submit_code, result
 
             last_error = str(result.get("result_msg", "خطای نامشخص"))
@@ -864,7 +878,12 @@ def _solve_captcha_for_page(
 
         if not tried_any:
             last_error = "کد کپچا خالی است"
-        print(f"  تلاش {attempt}/{max_retries}: کپچا اشتباه ({last_error})")
+        if stats:
+            stats.note_captcha_round_failed()
+        if ui:
+            ui.captcha_fail(attempt, max_retries, last_error)
+        else:
+            print(f"  تلاش {attempt}/{max_retries}: کپچا اشتباه ({last_error})")
 
     raise RuntimeError(f"صفحه {page} بعد از {max_retries} تلاش ناموفق: {last_error}")
 
@@ -882,10 +901,20 @@ def fetch_page_chunk(
     debug_dir: Path | None,
     learner: CaptchaLearner | None = None,
     reuse_captcha: bool = True,
+    ui: ScrapeConsole | None = None,
+    stats: ScrapeStats | None = None,
 ) -> tuple[list[tuple[int, list[dict]]], int | None]:
     """Solve captcha once, then fetch consecutive pages while the API accepts reuse."""
     token, submit_code, first_result = _solve_captcha_for_page(
-        client, start_page, ocr, manual, max_retries, debug_dir, learner
+        client,
+        start_page,
+        ocr,
+        manual,
+        max_retries,
+        debug_dir,
+        learner,
+        ui=ui,
+        stats=stats,
     )
 
     chunk: list[tuple[int, list[dict]]] = []
@@ -901,7 +930,10 @@ def fetch_page_chunk(
             break
 
         if page > start_page:
-            print(f"  reuse captcha -> page {page}...", flush=True)
+            if ui:
+                ui.captcha_reuse(page)
+            else:
+                print(f"  reuse captcha -> page {page}...", flush=True)
             result = client.get_domain_list(page, token, submit_code)
             if int(result.get("result", 0)) != 1:
                 message = str(result.get("result_msg", ""))
@@ -1008,6 +1040,16 @@ def parse_args() -> argparse.Namespace:
         help="With --search: output JSON",
     )
     parser.add_argument(
+        "--no-live",
+        action="store_true",
+        help="Keep all log lines (disable clearing transient output)",
+    )
+    parser.add_argument(
+        "--plain",
+        action="store_true",
+        help="Plain log output without colors or stats panels",
+    )
+    parser.add_argument(
         "--no-chunk",
         action="store_true",
         help="Fetch one page per captcha (disable captcha reuse across pages)",
@@ -1028,6 +1070,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     configure_console_encoding()
     args = parse_args()
+    use_pretty = not args.plain
+    enable_colors(use_pretty)
+    ui = ScrapeConsole(enabled=use_pretty, live=use_pretty and not args.no_live)
     config_path = Path(args.config)
     if not config_path.is_absolute():
         config_path = SCRIPT_DIR / config_path
@@ -1059,15 +1104,15 @@ def main() -> int:
 
     if args.manual:
         ocr = None
-        print("Manual captcha mode.")
+        ui.line(paint("Manual captcha mode.", C.YELLOW) if use_pretty else "Manual captcha mode.")
     else:
-        print("Loading OCR (ddddocr)...")
+        ui.line(paint("Loading OCR (ddddocr)...", C.DIM) if use_pretty else "Loading OCR (ddddocr)...")
         ocr = CaptchaOcr()
-        print("OCR ready.")
+        ui.line(paint("OCR ready.", C.GREEN) if use_pretty else "OCR ready.")
 
     learner = CaptchaLearner(CAPTCHA_LEARN_PATH, enabled=not args.no_learn)
     if learner.enabled:
-        print(learner.summary())
+        ui.line(learner.summary() if not use_pretty else paint(f"[learn] {learner.summary()}", C.MAGENTA, C.DIM))
 
     client = EnamadClient()
     total_saved = 0
@@ -1075,6 +1120,7 @@ def main() -> int:
     run_id: int | None = None
     total_pages_api: int | None = None
     start_page = args.start_page or 1
+    stats = ScrapeStats(start_page=start_page)
 
     try:
         with mysql_connection(app_config.mysql) as conn:
@@ -1112,11 +1158,19 @@ def main() -> int:
             end_page = None if args.all else start_page + pages_to_fetch - 1
 
             if args.all:
-                print(f"Scraping ALL pages from {start_page} -> MySQL ({app_config.mysql.database})")
+                ui.banner("Enamad Scraper — full run")
+                ui.line(
+                    paint(f"MySQL: {app_config.mysql.database}", C.DIM)
+                    if use_pretty
+                    else f"Scraping ALL pages from {start_page} -> MySQL ({app_config.mysql.database})"
+                )
             else:
-                print(f"Scraping pages {start_page} to {end_page} -> MySQL ({app_config.mysql.database})")
+                msg = f"Scraping pages {start_page} to {end_page} -> MySQL ({app_config.mysql.database})"
+                ui.line(paint(msg, C.CYAN) if use_pretty else msg)
 
             page = start_page
+            stats.start_page = start_page
+            stats.total_pages = total_pages_api
 
             run_id = start_scrape_run(
                 conn,
@@ -1126,16 +1180,22 @@ def main() -> int:
             )
             commit_connection(conn)
 
+            if use_pretty:
+                ui.refresh_sticky(stats, learner.summary() if learner.enabled else "")
+
             while True:
                 if total_pages_api is not None and page > total_pages_api:
                     break
                 if not args.all and end_page is not None and page > end_page:
                     break
 
-                label = f"Page {page}"
-                if total_pages_api:
-                    label += f" / {total_pages_api}"
-                print(f"{label}...")
+                if use_pretty:
+                    ui.begin_chunk(page, total_pages_api, stats)
+                else:
+                    label = f"Page {page}"
+                    if total_pages_api:
+                        label += f" / {total_pages_api}"
+                    print(f"{label}...")
 
                 chunk, total_pages_api = fetch_page_chunk(
                     client,
@@ -1147,14 +1207,17 @@ def main() -> int:
                     debug_dir,
                     learner=learner,
                     reuse_captcha=not args.no_chunk,
+                    ui=ui if use_pretty else None,
+                    stats=stats if use_pretty else None,
                 )
                 if not chunk:
                     raise RuntimeError(f"صفحه {page}: هیچ رکوردی دریافت نشد")
 
-                if len(chunk) > 1:
-                    pages_in_chunk = ", ".join(str(p) for p, _ in chunk)
-                    print(f"  ✓ {len(chunk)} pages with one captcha: {pages_in_chunk}")
+                chunk_pages = [p for p, _ in chunk]
+                if not use_pretty and len(chunk) > 1:
+                    print(f"  ✓ {len(chunk)} pages with one captcha: {', '.join(str(p) for p in chunk_pages)}")
 
+                chunk_records = 0
                 for chunk_page, rows in chunk:
                     if args.with_details:
                         enriched_rows = []
@@ -1166,15 +1229,17 @@ def main() -> int:
                     saved = save_domains(conn, rows, scrape_run_id=run_id)
                     total_saved += saved
                     pages_fetched += 1
+                    chunk_records += len(rows)
 
                     if args.all:
                         update_scrape_progress(conn, chunk_page, total_pages_api)
 
                     commit_connection(conn)
-                    print(
-                        f"  -> page {chunk_page}: {len(rows)} records "
-                        f"(total: {total_saved}, committed)"
-                    )
+                    if not use_pretty:
+                        print(
+                            f"  -> page {chunk_page}: {len(rows)} records "
+                            f"(total: {total_saved}, committed)"
+                        )
 
                     if total_pages_api is not None and chunk_page >= total_pages_api:
                         print(f"Reached last available page ({total_pages_api}).")
@@ -1187,8 +1252,11 @@ def main() -> int:
                 else:
                     page = chunk[-1][0] + 1
 
-                if learner.enabled and pages_fetched % 25 == 0:
-                    print(f"  [{learner.summary()}]")
+                stats.total_pages = total_pages_api
+                stats.note_chunk(chunk_pages, chunk_records)
+                if use_pretty:
+                    learner_line = learner.summary() if learner.enabled else ""
+                    ui.end_chunk(chunk_pages, chunk_records, total_saved, stats, learner_line)
 
                 if total_pages_api is not None and page > total_pages_api:
                     break
@@ -1224,9 +1292,14 @@ def main() -> int:
         if learner.enabled:
             learner.save()
 
-    print(f"Done. {total_saved} records stored in MySQL (run_id={run_id}).")
-    if learner.enabled:
-        print(learner.summary())
+    if use_pretty:
+        ui.done(total_saved, run_id)
+        if learner.enabled:
+            ui.line(paint(f"[learn] {learner.summary()}", C.MAGENTA, C.DIM))
+    else:
+        print(f"Done. {total_saved} records stored in MySQL (run_id={run_id}).")
+        if learner.enabled:
+            print(learner.summary())
     return 0
 
 
