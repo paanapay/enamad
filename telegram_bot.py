@@ -337,7 +337,7 @@ async def cmd_provinces(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_allowed(update, get_tg_config(context)):
+    if not is_admin(update, get_tg_config(context)):
         await deny_access(update)
         return
     if not update.message:
@@ -438,6 +438,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     if data == "m:stats":
+        if not is_admin(update, get_tg_config(context)):
+            await query.answer("⛔️ فقط مدیر", show_alert=True)
+            return
         with mysql_connection(app_config.mysql) as conn:
             stats = queries.get_stats(conn)
         await query.message.edit_text(
@@ -813,15 +816,13 @@ BOT_COMMANDS = [
     BotCommand("latest", "تازه‌ترین دامنه‌ها"),
     BotCommand("top", "دامنه‌های امتیاز بالا"),
     BotCommand("provinces", "مرور بر اساس استان"),
-    BotCommand("stats", "آمار دیتابیس"),
     BotCommand("help", "راهنما"),
 ]
 
 BOT_DESCRIPTION = (
     "🛡 ربات جستجو و مرور دامنه‌های دارای نماد اعتماد الکترونیکی (اینماد).\n\n"
     "با این ربات می‌توانید دامنه یا نام کسب‌وکار را جستجو کنید، مجوزها و "
-    "اطلاعات نماد اعتماد را ببینید، تازه‌ترین دامنه‌ها را مرور کنید و آمار "
-    "دیتابیس را مشاهده نمایید.\n\n"
+    "اطلاعات نماد اعتماد را ببینید و تازه‌ترین دامنه‌ها را مرور کنید.\n\n"
     "برای شروع /start را بزنید."
 )
 

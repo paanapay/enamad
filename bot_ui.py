@@ -30,8 +30,7 @@ def fmt_date(value: Any) -> str:
 
 def main_menu_text() -> str:
     return (
-        "🛡 <b>ربات اینماد</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
+        "🛡 <b>ربات اینماد</b>\n\n"
         "جستجو و مرور دامنه‌های دارای نماد اعتماد الکترونیکی\n\n"
         "یک گزینه از منو انتخاب کنید 👇"
     )
@@ -48,21 +47,22 @@ def main_menu_keyboard(*, is_admin: bool = False) -> InlineKeyboardMarkup:
             InlineKeyboardButton("🗺 بر اساس استان", callback_data="m:provinces"),
         ],
         [
-            InlineKeyboardButton("📊 آمار دیتابیس", callback_data="m:stats"),
             InlineKeyboardButton("❓ راهنما", callback_data="m:help"),
         ],
     ]
     if is_admin:
         rows.append(
-            [InlineKeyboardButton("🛠 پنل مدیریت", callback_data="m:admin")]
+            [
+                InlineKeyboardButton("📊 آمار دیتابیس", callback_data="m:stats"),
+                InlineKeyboardButton("🛠 پنل مدیریت", callback_data="m:admin"),
+            ]
         )
     return InlineKeyboardMarkup(rows)
 
 
 def admin_panel_text(user_stats: dict) -> str:
     return (
-        "🛠 <b>پنل مدیریت</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
+        "🛠 <b>پنل مدیریت</b>\n\n"
         f"👥 کل کاربران: <b>{user_stats.get('total', 0):,}</b>\n"
         f"🟢 فعال ۲۴ ساعت اخیر: <b>{user_stats.get('active_1d', 0):,}</b>\n"
         f"📅 فعال ۷ روز اخیر: <b>{user_stats.get('active_7d', 0):,}</b>\n"
@@ -90,7 +90,6 @@ def users_list_text(rows: list[dict], page: int, total: int) -> str:
     pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
     header = (
         "👥 <b>کاربران ربات</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
         f"صفحه {page + 1} از {pages}  •  {total:,} کاربر\n"
     )
     if not rows:
@@ -149,13 +148,11 @@ def search_prompt_text() -> str:
 
 def help_text() -> str:
     return (
-        "❓ <b>راهنما</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n\n"
+        "❓ <b>راهنما</b>\n\n"
         "🔍 <b>جستجو</b> — دامنه، نام فارسی یا صاحب امتیاز\n"
-        "🆕 <b>تازه‌ترین‌ها</b> — بر اساس تاریخ صدور اینماد\n"
+        "🆕 <b>تازه‌ترین‌ها</b> — بر اساس ترتیب سایت اینماد\n"
         "⭐ <b>امتیاز بالا</b> — دامنه‌های ۴ و ۵ ستاره\n"
-        "🗺 <b>استان</b> — فیلتر بر اساس استان\n"
-        "📊 <b>آمار</b> — وضعیت دیتابیس و اسکرپ\n\n"
+        "🗺 <b>استان</b> — فیلتر بر اساس استان\n\n"
         "💡 اگر دامنه در دیتابیس نبود، جستجوی زنده از enamad.ir هم انجام می‌شود."
     )
 
@@ -165,7 +162,6 @@ def stats_text(stats: dict) -> str:
     last_run = stats.get("last_run")
     lines = [
         "📊 <b>آمار دیتابیس</b>",
-        "━━━━━━━━━━━━━━━━━━",
         f"📦 کل دامنه‌ها: <b>{stats.get('total', 0):,}</b>",
         f"⭐ دارای امتیاز: <b>{stats.get('rated', 0):,}</b>",
     ]
@@ -212,7 +208,6 @@ def domain_card(row: dict, *, compact: bool = False) -> str:
         )
 
     lines = [
-        "━━━━━━━━━━━━━━━━━━",
         f"🌐 <b>{domain}</b>",
         f"🏪 {name}",
         f"{stars(rating)} ({rating}/5)",
@@ -274,7 +269,6 @@ def search_other_results_text(rows: list[dict], total: int) -> str:
         return ""
     lines = [
         "",
-        "━━━━━━━━━━━━━━━━━━",
         f"<b>نتایج مشابه دیگر</b> ({total - 1:,} مورد)",
         "",
     ]
@@ -291,7 +285,6 @@ def list_header(title: str, page: int, total: int) -> str:
     pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
     return (
         f"{title}\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
         f"صفحه {page + 1} از {pages}  •  {total:,} مورد\n"
     )
 
@@ -334,7 +327,6 @@ def search_results_text(query: str, rows: list[dict], total: int) -> str:
 def provinces_text(provinces: list[dict]) -> str:
     lines = [
         "🗺 <b>انتخاب استان</b>",
-        "━━━━━━━━━━━━━━━━━━",
         "یک استان را انتخاب کنید:",
     ]
     return "\n".join(lines)
