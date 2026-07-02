@@ -618,7 +618,7 @@ def connect(cfg: MySQLConfig, database=_NO_DATABASE):
 
 
 @contextmanager
-def mysql_connection(cfg: MySQLConfig, database: str | None = None) -> Iterator[Any]:
+def mysql_connection(cfg: MySQLConfig, database=_NO_DATABASE) -> Iterator[Any]:
     conn = connect(cfg, database=database)
     try:
         yield conn
