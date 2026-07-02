@@ -628,7 +628,79 @@ async def show_domain_list(
         await message.reply_text(text, reply_markup=markup, parse_mode=ParseMode.HTML)
 
 
-async def show_domain_detail(message, app_config, domain_id: int) -> None:
+def _needs_enrichment(row: dict, services: list[dict]) -> bool:
+    """True when a domain has no contact details yet (never trust-seal fetched)."""
+    if not row.get("enamad_id") or not row.get("code"):
+        return False
+    has_contact = any(
+        row.get(field) for field in ("business_address", "phone", "email")
+    )
+    return not has_contact
+
+
+async def run_enrichment(
+    message,
+    app_config,
+    domain_id: int,
+    *,
+    base_text: str,
+    markup,
+    render,
+) -> None:
+    """Fetch trust-seal details in the background and update the message.
+
+    `render(row, services) -> str` produces the final card text.
+    """
+    note = (
+        f"{base_text}\n\n⏳ <i>در حال دریافت اطلاعات تکمیلی از اینماد…</i>"
+    )
+    try:
+        await message.edit_text(
+            note,
+            reply_markup=markup,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+    except Exception:
+        pass
+
+    try:
+        with mysql_connection(app_config.mysql) as conn:
+            refreshed = await asyncio.to_thread(
+                refresh_domain_trustseal, conn, domain_id
+            )
+            commit_connection(conn)
+    except Exception as exc:
+        log.warning("Auto-enrich failed for id=%s: %s", domain_id, exc)
+        refreshed = None
+
+    if not refreshed:
+        try:
+            await message.edit_text(
+                base_text,
+                reply_markup=markup,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            pass
+        return
+
+    row, services = refreshed
+    try:
+        await message.edit_text(
+            render(row, services),
+            reply_markup=markup,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+    except Exception as exc:
+        log.warning("Auto-enrich update failed for id=%s: %s", domain_id, exc)
+
+
+async def show_domain_detail(
+    message, app_config, domain_id: int, *, allow_enrich: bool = True
+) -> None:
     with mysql_connection(app_config.mysql) as conn:
         row = queries.get_domain_by_id(conn, domain_id)
         if not row:
@@ -649,6 +721,16 @@ async def show_domain_detail(message, app_config, domain_id: int) -> None:
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
     )
+
+    if allow_enrich and _needs_enrichment(row, services):
+        await run_enrichment(
+            message,
+            app_config,
+            domain_id,
+            base_text=text,
+            markup=domain_detail_keyboard(domain_id),
+            render=lambda r, s: domain_detail_text(r, s),
+        )
 
 
 def load_row_services(conn, row: dict) -> list[dict]:
@@ -684,6 +766,7 @@ async def reply_search_result(
     *,
     total: int,
     others: list[dict],
+    app_config=None,
 ) -> None:
     text = build_search_reply(row, services, query, total=total, others=others)
     domain_id = row.get("id")
@@ -693,7 +776,7 @@ async def reply_search_result(
         markup = domain_detail_keyboard(int(domain_id))
     else:
         markup = back_home_keyboard()
-    await message.reply_text(
+    sent = await message.reply_text(
         text,
         reply_markup=markup,
         parse_mode=ParseMode.HTML,
@@ -708,6 +791,19 @@ async def reply_search_result(
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True,
             )
+
+    # Single exact result missing contact info: enrich in the background.
+    if app_config and not others and domain_id and _needs_enrichment(row, services):
+        await run_enrichment(
+            sent,
+            app_config,
+            int(domain_id),
+            base_text=text,
+            markup=markup,
+            render=lambda r, s: build_search_reply(
+                r, s, query, total=total, others=[]
+            ),
+        )
 
 
 def _live_search_domain_sync(domain: str) -> dict | None:
@@ -765,6 +861,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 query,
                 total=1,
                 others=[],
+                app_config=app_config,
             )
             return
 
@@ -783,6 +880,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             query,
             total=total,
             others=others,
+            app_config=app_config,
         )
         return
 
