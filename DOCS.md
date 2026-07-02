@@ -218,10 +218,15 @@ Common causes:
 
 | Cause | Fix |
 |-------|-----|
+| `Fatal glibc error: CPU does not support x86-64-v2` | Old VPS CPU. We use `mariadb:11.4` (Ubuntu-based) instead of `mysql:8.0` (Oracle Linux 9) for this reason. MariaDB is a drop-in replacement |
 | First start still initializing | Wait ~60s and run `docker compose up -d` again |
 | Wrong / changed `MYSQL_PASSWORD` after volume was created | Use the original password, or reset: `docker compose down -v` (deletes DB!) then `up` again |
-| Low RAM on VPS | The compose file limits InnoDB to 128M; ensure at least ~512MB free for MySQL |
+| Low RAM on VPS | The compose file limits InnoDB to 128M; ensure at least ~512MB free |
 | Corrupted volume | `docker compose down -v` then recreate (loses data) |
+
+> The database image is **MariaDB**, chosen because `mysql:8.0` requires a
+> modern CPU (x86-64-v2). The app talks plain SQL via PyMySQL, so MariaDB and
+> MySQL are interchangeable here.
 
 Check health manually:
 

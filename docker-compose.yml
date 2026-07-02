@@ -1,10 +1,12 @@
 services:
   mysql:
-    image: mysql:8.0
+    # MariaDB (Ubuntu-based) instead of mysql:8.0, which needs an x86-64-v2 CPU
+    # (Oracle Linux 9 glibc) and crashes on older VPS CPUs. Drop-in compatible.
+    image: mariadb:11.4
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-changeme}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-enamad}
+      MARIADB_ROOT_PASSWORD: ${MYSQL_PASSWORD:-changeme}
+      MARIADB_DATABASE: ${MYSQL_DATABASE:-enamad}
       TZ: ${TZ:-Asia/Tehran}
     command: >
       --character-set-server=utf8mb4
@@ -13,8 +15,7 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      # Use the password inside the container (not compose-time substitution).
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" || exit 1"]
+      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 12
