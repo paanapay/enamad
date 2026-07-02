@@ -402,7 +402,15 @@ def refresh_stale_domains_parallel(
     """
     import threading
     from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import wait as _futures_wait_impl
+    from concurrent.futures import FIRST_COMPLETED
     from extract_enamad import EnamadClient
+
+    def _futures_wait(pending, timeout):
+        result = _futures_wait_impl(
+            pending, timeout=timeout, return_when=FIRST_COMPLETED
+        )
+        return result.done, result.not_done
 
     with mysql_connection(cfg) as conn:
         rows = _select_stale_ids(conn, days, limit, missing_only=missing_only)
@@ -412,12 +420,28 @@ def refresh_stale_domains_parallel(
         return 0, 0, 0
 
     workers = max(1, min(workers, total))
+    # enamad.ir throttles concurrent connections per IP. Beyond ~6 the server
+    # returns 429 and every worker stalls in backoff, so throughput DROPS.
+    SAFE_WORKERS = 6
+    capped = False
+    if workers > SAFE_WORKERS:
+        capped = True
+        workers = SAFE_WORKERS
     started = time.time()
     if progress:
         if missing_only:
             age_label = "missing details"
         else:
             age_label = f"older than {days}d" if days > 0 else "all domains"
+        if capped:
+            print(
+                _ansi(
+                    f"Note: capping workers to {SAFE_WORKERS} — enamad.ir throttles "
+                    f"a single IP; more workers only trigger 429s and slow down.",
+                    "\033[33m",
+                ),
+                flush=True,
+            )
         print(
             _ansi(
                 f"Refreshing {total:,} domain(s) from trust seal "
@@ -430,6 +454,7 @@ def refresh_stale_domains_parallel(
 
     lock = threading.Lock()
     counters = {"done": 0, "ok": 0, "failed": 0}
+    stop_event = threading.Event()
 
     # Round-robin split keeps oldest-first order roughly balanced per worker.
     chunks: list[list[dict]] = [rows[i::workers] for i in range(workers)]
@@ -442,6 +467,8 @@ def refresh_stale_domains_parallel(
         processed = 0
         try:
             for row in chunk:
+                if stop_event.is_set():
+                    break
                 try:
                     result = refresh_domain_trustseal(conn, row["id"], client=client)
                     success = bool(result)
@@ -463,18 +490,46 @@ def refresh_stale_domains_parallel(
                             counters["ok"], counters["failed"], started,
                             current_domain=row.get("domain"),
                         )
-                if delay > 0:
+                if delay > 0 and not stop_event.is_set():
                     time.sleep(delay)
             conn.commit()
         finally:
             conn.close()
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(worker, chunk) for chunk in chunks if chunk]
-        for future in futures:
-            future.result()
+    pool = ThreadPoolExecutor(max_workers=workers)
+    futures = [pool.submit(worker, chunk) for chunk in chunks if chunk]
+    interrupted = False
+    try:
+        # Poll instead of a plain result() join so Ctrl+C reaches the main thread.
+        pending = set(futures)
+        while pending:
+            done, pending = _futures_wait(pending, timeout=0.5)
+    except KeyboardInterrupt:
+        interrupted = True
+        stop_event.set()
+        if progress:
+            print(
+                _ansi(
+                    "\nStopping... waiting for in-flight requests to finish.",
+                    "\033[33m",
+                ),
+                flush=True,
+            )
+    finally:
+        # Workers exit soon after stop_event; don't cancel so their commits land.
+        pool.shutdown(wait=True)
 
-    return total, counters["ok"], counters["failed"]
+    if interrupted and progress:
+        print(
+            _ansi(
+                f"Interrupted. {counters['done']:,}/{total:,} processed "
+                f"({counters['ok']:,} ok, {counters['failed']:,} failed).",
+                "\033[33m",
+            ),
+            flush=True,
+        )
+
+    return counters["done"], counters["ok"], counters["failed"]
 
 
 def fix_encoded_domains(conn) -> int:
