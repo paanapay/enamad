@@ -19,6 +19,7 @@ import argparse
 import asyncio
 import configparser
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -84,12 +85,23 @@ class TelegramConfig:
     read_timeout: float
 
 
+def _env(*keys: str) -> str | None:
+    for key in keys:
+        value = os.environ.get(key)
+        if value is not None and value.strip() != "":
+            return value.strip()
+    return None
+
+
 def load_telegram_config(path: Path) -> TelegramConfig:
     parser = configparser.ConfigParser()
-    parser.read(path, encoding="utf-8")
-    if not parser.has_section("telegram"):
+    if path.is_file():
+        parser.read(path, encoding="utf-8")
+
+    env_token = _env("BOT_TOKEN", "TELEGRAM_BOT_TOKEN")
+    if not parser.has_section("telegram") and env_token is None:
         raise ValueError(
-            "بخش [telegram] در config.ini نیست.\n"
+            "بخش [telegram] در config.ini نیست و BOT_TOKEN هم ست نشده.\n"
             "نمونه:\n"
             "[telegram]\n"
             "bot_token = YOUR_TOKEN\n"
@@ -97,11 +109,13 @@ def load_telegram_config(path: Path) -> TelegramConfig:
             "live_search = yes"
         )
 
-    token = parser.get("telegram", "bot_token", fallback="").strip()
+    token = env_token or parser.get("telegram", "bot_token", fallback="").strip()
     if not token or token.upper() == "YOUR_TOKEN":
-        raise ValueError("bot_token در config.ini تنظیم نشده.")
+        raise ValueError("bot_token تنظیم نشده (config.ini یا BOT_TOKEN).")
 
-    raw_users = parser.get("telegram", "allowed_users", fallback="").strip()
+    raw_users = _env("TELEGRAM_ALLOWED_USERS") or parser.get(
+        "telegram", "allowed_users", fallback=""
+    ).strip()
     allowed: set[int] = set()
     if raw_users:
         for part in raw_users.replace(";", ",").split(","):
@@ -109,17 +123,28 @@ def load_telegram_config(path: Path) -> TelegramConfig:
             if part.isdigit():
                 allowed.add(int(part))
 
-    live = parser.get("telegram", "live_search", fallback="yes").strip().lower()
+    live = (
+        _env("TELEGRAM_LIVE_SEARCH")
+        or parser.get("telegram", "live_search", fallback="yes")
+    ).strip().lower()
     live_search = live in ("1", "true", "yes", "on")
 
-    proxy = parser.get("telegram", "proxy", fallback="").strip()
+    proxy = _env("TELEGRAM_PROXY") or parser.get("telegram", "proxy", fallback="").strip()
     proxy_url = proxy or None
 
-    api_base = parser.get("telegram", "api_base_url", fallback="").strip()
+    api_base = _env("TELEGRAM_API_BASE_URL") or parser.get(
+        "telegram", "api_base_url", fallback=""
+    ).strip()
     api_base_url = api_base or None
 
-    connect_timeout = parser.getfloat("telegram", "connect_timeout", fallback=30.0)
-    read_timeout = parser.getfloat("telegram", "read_timeout", fallback=30.0)
+    connect_timeout = float(
+        _env("TELEGRAM_CONNECT_TIMEOUT")
+        or parser.getfloat("telegram", "connect_timeout", fallback=30.0)
+    )
+    read_timeout = float(
+        _env("TELEGRAM_READ_TIMEOUT")
+        or parser.getfloat("telegram", "read_timeout", fallback=30.0)
+    )
 
     return TelegramConfig(
         bot_token=token,

@@ -1,0 +1,64 @@
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-changeme}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-enamad}
+      TZ: ${TZ:-Asia/Tehran}
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_PASSWORD:-changeme}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # One-shot: create database schema, then exit.
+  init:
+    build: .
+    command: python extract_enamad.py --init-db
+    restart: "no"
+    environment: &app_env
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-changeme}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-enamad}
+      TZ: ${TZ:-Asia/Tehran}
+      BOT_TOKEN: ${BOT_TOKEN:-}
+      TELEGRAM_ALLOWED_USERS: ${TELEGRAM_ALLOWED_USERS:-}
+      TELEGRAM_LIVE_SEARCH: ${TELEGRAM_LIVE_SEARCH:-yes}
+      TELEGRAM_PROXY: ${TELEGRAM_PROXY:-}
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  bot:
+    build: .
+    command: python telegram_bot.py
+    restart: unless-stopped
+    environment: *app_env
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+  scheduler:
+    build: .
+    command: python scheduler.py
+    restart: unless-stopped
+    environment:
+      <<: *app_env
+      SCHED_UPDATE_CRON: ${SCHED_UPDATE_CRON:-0 3 * * *}
+      SCHED_REFRESH_CRON: ${SCHED_REFRESH_CRON:-0 */6 * * *}
+      SCHED_REFRESH_DAYS: ${SCHED_REFRESH_DAYS:-30}
+      SCHED_REFRESH_LIMIT: ${SCHED_REFRESH_LIMIT:-500}
+      SCHED_RUN_ON_START: ${SCHED_RUN_ON_START:-no}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+volumes:
+  mysql_data:

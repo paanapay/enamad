@@ -1,6 +1,9 @@
 # Local config (copy from config.example.ini)
 config.ini
 
+# Docker env (copy from .env.example)
+.env
+
 # Python
 __pycache__/
 *.py[cod]

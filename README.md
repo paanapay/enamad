@@ -22,11 +22,17 @@ Recommended on Windows: [Laragon](https://laragon.org/) with Python + MySQL enab
 
 ```
 enamad/
-├── extract_enamad.py      # Main scraper
-├── db.py                  # MySQL helpers
+├── extract_enamad.py      # Main scraper (+ --update / --refresh-stale)
+├── telegram_bot.py        # Telegram bot
+├── scheduler.py           # Recurring update/refresh scheduler (APScheduler)
+├── db.py                  # MySQL helpers (config via file or ENV)
+├── console_ui.py          # Live console / parallel dashboard
 ├── schema.sql             # Database schema
 ├── config.example.ini     # Config template
 ├── config.ini             # Your local config (not in git)
+├── Dockerfile             # Container image
+├── docker-compose.yml     # mysql + bot + scheduler stack
+├── .env.example           # Docker env template
 ├── requirements.txt
 └── README.md
 ```
@@ -201,6 +207,108 @@ python extract_enamad.py --config D:\path\to\config.ini --pages 5
 | `--manual` | Type captcha manually |
 | `--debug` | Save captcha images to `debug_captcha/` |
 | `--config FILE` | Config file path (default: `config.ini`) |
+| `--update` | Incremental: fetch only newly-added tail pages |
+| `--update-overlap N` | With `--update`: re-scan N pages before the old total (default: 5) |
+| `--refresh-stale` | Refresh domains not updated recently via trust seal (no captcha) |
+| `--stale-days N` | With `--refresh-stale`: refresh domains older than N days (default: 30) |
+| `--refresh-services [DOMAIN]` | Re-fetch trust seal + all licenses (one domain, or all) |
+| `--refresh-limit N` | Cap domains per refresh run |
+| `--fix-domains` | Decode URL-encoded domains stored in MySQL |
+
+---
+
+## Keeping data fresh (no full re-scrape)
+
+A full scrape takes hours. **Do it once**, then keep the DB current with two cheap jobs:
+
+### 1. Discover new domains — `--update`
+
+New Enamad approvals are appended at the **end** of the list. `--update` solves a
+single captcha to read the current total page count, then scrapes only the new
+tail pages (plus a small overlap) up to that total:
+
+```bash
+python extract_enamad.py --update
+```
+
+Typically a handful of pages → a couple minutes instead of hours.
+
+### 2. Refresh existing domains — `--refresh-stale` (no captcha)
+
+Rating, expiry, licenses and contact info are refreshed from the public
+**trust seal** page, which needs **no captcha**:
+
+```bash
+# refresh up to 500 domains untouched for 30+ days
+python extract_enamad.py --refresh-stale --stale-days 30 --refresh-limit 500
+```
+
+Refresh a single domain and all its licenses:
+
+```bash
+python extract_enamad.py --refresh-services digikala.com
+```
+
+---
+
+## Scheduling (Laravel-scheduler style)
+
+`scheduler.py` runs `--update` and `--refresh-stale` on a recurring cron
+schedule. It is portable (same on Windows/Linux/Docker) and reads frequencies
+from the `[scheduler]` section of `config.ini` (or `SCHED_*` env vars):
+
+```bash
+pip install -r requirements.txt
+python scheduler.py
+```
+
+```ini
+[scheduler]
+timezone = Asia/Tehran
+update_cron = 0 3 * * *      ; new domains daily at 03:00
+refresh_cron = 0 */6 * * *   ; refresh stale domains every 6 hours
+refresh_days = 30
+refresh_limit = 500
+run_on_start = no
+```
+
+The process must stay running. On a server or in Docker it restarts
+automatically (see below).
+
+---
+
+## Docker
+
+Runs MySQL, the bot, and the scheduler together. Config comes from environment
+variables (no `config.ini` needed inside containers).
+
+```bash
+cp .env.example .env      # set MYSQL_PASSWORD and BOT_TOKEN
+docker compose up -d --build
+```
+
+Services:
+
+| Service | Role |
+|---------|------|
+| `mysql` | Database with a persistent volume |
+| `init` | One-shot: creates the schema, then exits |
+| `bot` | Telegram bot (always on) |
+| `scheduler` | Recurring `--update` + `--refresh-stale` |
+
+Run the **initial full scrape** once (inside the bot container):
+
+```bash
+docker compose run --rm bot python extract_enamad.py --all --workers 4 --chunk-pages 10
+```
+
+Env vars (see `.env.example`): `MYSQL_PASSWORD`, `MYSQL_DATABASE`, `BOT_TOKEN`,
+`TELEGRAM_ALLOWED_USERS`, `SCHED_UPDATE_CRON`, `SCHED_REFRESH_CRON`,
+`SCHED_REFRESH_DAYS`, `SCHED_REFRESH_LIMIT`, `TZ`.
+
+> The scraper (`getDomainList`) needs to reach `enamad.ir`. `TELEGRAM_PROXY` is
+> only needed if `api.telegram.org` is filtered on the host (e.g. inside Iran);
+> on a foreign server leave it empty.
 
 ---
 

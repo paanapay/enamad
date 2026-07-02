@@ -1,0 +1,25 @@
+.git
+.gitignore
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Local secrets / runtime artifacts (provide via env / volumes instead)
+config.ini
+.env
+enamad_cookies.txt
+cookies.txt
+*.csv
+debug_captcha/
+captcha_tmp/
+captcha.jpg
+captcha_learn*.json
+
+# Docs / IDE
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+21.0

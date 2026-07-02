@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import configparser
+import os
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -108,8 +110,6 @@ def refresh_domain_services(
     delay: float = 0.5,
 ) -> tuple[int, int]:
     """Re-fetch trust seal pages and update services for stored domains."""
-    import time
-
     where = "WHERE enamad_id IS NOT NULL AND enamad_id != '' AND code IS NOT NULL AND code != ''"
     params: list = []
     if domain:
@@ -145,6 +145,48 @@ def refresh_domain_services(
     return ok, failed
 
 
+def refresh_stale_domains(
+    conn,
+    *,
+    days: int = 30,
+    limit: int = 500,
+    delay: float = 0.3,
+) -> tuple[int, int, int]:
+    """Refresh domains not updated in the last `days` days (no captcha needed).
+
+    Returns (candidates, ok, failed). Oldest `updated_at` is refreshed first.
+    """
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT id
+            FROM enamad_domains
+            WHERE enamad_id IS NOT NULL AND enamad_id != ''
+              AND code IS NOT NULL AND code != ''
+              AND (updated_at IS NULL OR updated_at < (NOW() - INTERVAL %s DAY))
+            ORDER BY updated_at ASC
+            LIMIT %s
+            """,
+            (days, limit),
+        )
+        ids = [row["id"] for row in cursor.fetchall()]
+
+    ok = 0
+    failed = 0
+    for index, domain_id in enumerate(ids, start=1):
+        try:
+            if refresh_domain_trustseal(conn, domain_id):
+                ok += 1
+            else:
+                failed += 1
+        except Exception:
+            failed += 1
+        if delay > 0 and index < len(ids):
+            time.sleep(delay)
+
+    return len(ids), ok, failed
+
+
 def fix_encoded_domains(conn) -> int:
     """Repair domains stored with percent-encoding (e.g. Persian IDN from API)."""
     fixed = 0
@@ -172,27 +214,38 @@ def fix_encoded_domains(conn) -> int:
     return fixed
 
 
+def _env(*keys: str) -> str | None:
+    """Return the first non-empty environment variable among keys."""
+    for key in keys:
+        value = os.environ.get(key)
+        if value is not None and value.strip() != "":
+            return value.strip()
+    return None
+
+
 def load_config(path: Path | None = None) -> AppConfig:
     config_path = path or DEFAULT_CONFIG_PATH
-    if not config_path.is_file():
-        raise FileNotFoundError(
-            f"Config file not found: {config_path}\n"
-            f"Copy config.example.ini to config.ini and edit your MySQL settings."
-        )
 
     parser = configparser.ConfigParser()
-    parser.read(config_path, encoding="utf-8")
+    if config_path.is_file():
+        parser.read(config_path, encoding="utf-8")
+    elif _env("MYSQL_HOST") is None:
+        raise FileNotFoundError(
+            f"Config file not found: {config_path}\n"
+            f"Copy config.example.ini to config.ini and edit your MySQL settings, "
+            f"or provide MYSQL_HOST/MYSQL_USER/... environment variables (Docker)."
+        )
 
     mysql = MySQLConfig(
-        host=parser.get("mysql", "host", fallback="127.0.0.1"),
-        port=parser.getint("mysql", "port", fallback=3306),
-        user=parser.get("mysql", "user", fallback="root"),
-        password=parser.get("mysql", "password", fallback=""),
-        database=parser.get("mysql", "database", fallback="enamad"),
+        host=_env("MYSQL_HOST") or parser.get("mysql", "host", fallback="127.0.0.1"),
+        port=int(_env("MYSQL_PORT") or parser.getint("mysql", "port", fallback=3306)),
+        user=_env("MYSQL_USER") or parser.get("mysql", "user", fallback="root"),
+        password=_env("MYSQL_PASSWORD") or parser.get("mysql", "password", fallback=""),
+        database=_env("MYSQL_DATABASE") or parser.get("mysql", "database", fallback="enamad"),
     )
     scraper = ScraperConfig(
-        delay=parser.getfloat("scraper", "delay", fallback=1.0),
-        retries=parser.getint("scraper", "retries", fallback=5),
+        delay=float(_env("SCRAPER_DELAY") or parser.getfloat("scraper", "delay", fallback=1.0)),
+        retries=int(_env("SCRAPER_RETRIES") or parser.getint("scraper", "retries", fallback=5)),
     )
     return AppConfig(mysql=mysql, scraper=scraper)
 

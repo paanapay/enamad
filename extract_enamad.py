@@ -46,6 +46,7 @@ from console_ui import (
     WorkerConsole,
     ParallelDashboard,
     enable_colors,
+    fmt_int,
     paint,
     C,
 )
@@ -54,6 +55,7 @@ from db import (
     finish_scrape_run,
     fix_encoded_domains,
     refresh_domain_services,
+    refresh_stale_domains,
     get_scrape_state,
     init_database,
     load_config,
@@ -1667,6 +1669,99 @@ def run_parallel_scrape(
     return 1 if failed else 0
 
 
+def discover_total_pages(retries: int, fast_ocr: bool) -> int | None:
+    """Solve one captcha on page 1 to read the current total page count."""
+    ocr = CaptchaOcr()
+    learner = CaptchaLearner(learn_path_for_worker(None), enabled=True)
+    client = EnamadClient()
+    try:
+        _, _, result = _solve_captcha_for_page(
+            client,
+            1,
+            ocr,
+            False,
+            retries,
+            None,
+            learner,
+            fast_ocr=fast_ocr,
+        )
+    finally:
+        if learner.enabled:
+            learner.save()
+        cleanup_captcha_images()
+    _, total_pages = _rows_from_result(result, 1)
+    return total_pages
+
+
+def run_update(
+    args: argparse.Namespace,
+    app_config,
+    config_path: Path,
+    max_pages_per_chunk: int,
+) -> int:
+    """Incrementally fetch only newly-added pages at the tail of the list.
+
+    New Enamad approvals are appended at the end of the list, so we only need to
+    re-scrape the last known pages (plus an overlap) up to the new total.
+    """
+    delay = args.delay if args.delay is not None else app_config.scraper.delay
+    retries = args.retries if args.retries is not None else app_config.scraper.retries
+    overlap = max(0, args.update_overlap)
+
+    with mysql_connection(app_config.mysql) as conn:
+        state = get_scrape_state(conn)
+    old_total = state.get("total_pages")
+
+    print(paint("Discovering current total pages (1 captcha)...", C.CYAN))
+    current_total = discover_total_pages(retries, args.fast_ocr)
+    if not current_total or current_total < 1:
+        print("Could not determine total pages from Enamad.", file=sys.stderr)
+        return 1
+
+    base = old_total if old_total else current_total
+    start_page = max(1, min(base, current_total) - overlap + 1)
+    end_page = current_total
+
+    new_pages = max(0, current_total - old_total) if old_total else 0
+    print(
+        paint(
+            f"Total pages: {fmt_int(old_total) if old_total else '?'} -> {fmt_int(current_total)}"
+            f"  ({new_pages} new)  scanning pages {fmt_int(start_page)}-{fmt_int(end_page)}"
+            f" (overlap {overlap})",
+            C.WHITE,
+        )
+    )
+
+    options = ListScrapeOptions(
+        config_path=str(config_path),
+        start_page=start_page,
+        end_page=end_page,
+        all_mode=False,
+        delay=delay,
+        retries=retries,
+        max_pages_per_chunk=max_pages_per_chunk,
+        manual=False,
+        fast_ocr=args.fast_ocr,
+        no_chunk=args.no_chunk,
+        with_details=False,
+        no_learn=args.no_learn,
+        debug=args.debug,
+        use_pretty=not args.plain,
+        live_ui=not args.plain and not args.no_live,
+        resume=False,
+        reset=False,
+    )
+    result = run_list_scrape(options)
+
+    with mysql_connection(app_config.mysql) as conn:
+        update_scrape_progress(conn, current_total, current_total)
+        commit_connection(conn)
+
+    saved = int(result.get("records_saved") or 0) if isinstance(result, dict) else 0
+    print(paint(f"Update done. {fmt_int(saved)} records touched.", C.GREEN, C.BOLD))
+    return 0
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Scrape Enamad domain holders into MySQL")
     parser.add_argument(
@@ -1695,7 +1790,29 @@ def parse_args() -> argparse.Namespace:
         "--refresh-limit",
         type=int,
         default=None,
-        help="With --refresh-services: max domains to refresh",
+        help="With --refresh-services/--refresh-stale: max domains to refresh",
+    )
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Incremental: fetch only newly-added tail pages up to the new total",
+    )
+    parser.add_argument(
+        "--update-overlap",
+        type=int,
+        default=5,
+        help="With --update: re-scan this many pages before the old total (default: 5)",
+    )
+    parser.add_argument(
+        "--refresh-stale",
+        action="store_true",
+        help="Refresh domains not updated recently via trust seal (no captcha)",
+    )
+    parser.add_argument(
+        "--stale-days",
+        type=int,
+        default=30,
+        help="With --refresh-stale: refresh domains older than N days (default: 30)",
     )
     parser.add_argument(
         "--all",
@@ -1865,6 +1982,24 @@ def main() -> int:
         print(f"Refreshed services for {scope}: {ok} ok, {failed} failed.")
         return 0
 
+    if args.refresh_stale:
+        app_config = load_config(config_path)
+        limit = args.refresh_limit if args.refresh_limit is not None else 500
+        delay = args.delay if args.delay is not None else 0.3
+        with mysql_connection(app_config.mysql) as conn:
+            candidates, ok, failed = refresh_stale_domains(
+                conn,
+                days=args.stale_days,
+                limit=limit,
+                delay=delay,
+            )
+            commit_connection(conn)
+        print(
+            f"Stale refresh (>{args.stale_days}d): {candidates} candidates, "
+            f"{ok} ok, {failed} failed."
+        )
+        return 0
+
     app_config = load_config(config_path)
 
     if args.search or args.search_file:
@@ -1879,6 +2014,9 @@ def main() -> int:
         print("chunk-pages must be at least 1.", file=sys.stderr)
         return 1
     max_pages_per_chunk = chunk_pages
+
+    if args.update:
+        return run_update(args, app_config, config_path, max_pages_per_chunk)
 
     if args.workers > 1:
         return run_parallel_scrape(args, app_config, config_path, max_pages_per_chunk)
