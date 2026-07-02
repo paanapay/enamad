@@ -386,7 +386,8 @@ Browse the scraped database from Telegram.
 ```ini
 [telegram]
 bot_token = 123456:ABC...
-allowed_users =          ; optional: your Telegram user ID(s), comma-separated
+allowed_users =          ; optional: allow-list of Telegram user IDs (empty = public)
+admin_users = 11111111   ; admin user ID(s): see user list + admin panel
 live_search = yes        ; query enamad.ir if not found locally
 ```
 
@@ -397,18 +398,47 @@ pip install -r requirements.txt
 python telegram_bot.py
 ```
 
+On startup the bot auto-registers its **menu commands** and **description** on
+Telegram (no manual BotFather setup needed).
+
 ### Features
 
 | Feature | Description |
 |---------|-------------|
 | 🔍 Search | Domain, business name, or owner (local DB + optional live API) |
-| 🆕 Latest | Recently updated records in MySQL |
-| 📅 New approvals | Sorted by approve date |
+| 🆕 Latest | Domains in the same order as the enamad.ir site list |
 | ⭐ Top rated | 4–5 star domains |
 | 🗺 By province | Browse by province |
 | 📊 Stats | DB size, scrape progress, last run |
 
-Send any domain name as text to search directly.
+Send any domain name as text to search directly. Commands: `/search`, `/latest`,
+`/top`, `/provinces`, `/stats`, `/help`.
+
+### Users & admin
+
+Every interaction is recorded in the `bot_users` table (id, name, username,
+interaction count, first/last seen). Set `admin_users` to your Telegram numeric
+ID (get it from [@userinfobot](https://t.me/userinfobot)).
+
+| Role | Access |
+|------|--------|
+| Regular user | Enamad features only: search, lists, stats |
+| **Admin** | Everything + **🛠 admin panel** (user count, active users) and **👥 user list** via `/users` |
+
+Admin-only actions are rejected for non-admins. If `allowed_users` is empty the
+bot is public; admins always have access regardless of the allow-list.
+
+### Polling vs webhook
+
+The bot uses **long polling** by default — no public URL, HTTPS cert, or open
+port needed, and it works fine behind NAT or a proxy. This is the recommended
+setup for a single bot at normal volume, on both your machine and a VPS.
+
+A **webhook** only helps at high message volume (Telegram pushes updates instead
+of the bot pulling) but requires a public HTTPS endpoint + certificate + reverse
+proxy. It does **not** make Enamad scraping/updates faster — that path is
+independent of how Telegram delivers messages. Stick with polling unless you hit
+real scale.
 
 ---
 

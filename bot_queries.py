@@ -97,12 +97,13 @@ def search_domains(conn, query: str, *, limit: int = 8) -> list[dict]:
 
 
 def get_latest_domains(conn, *, offset: int, limit: int) -> list[dict]:
+    """Domains in the same order as the enamad.ir site list (source_page/row)."""
     with conn.cursor() as cursor:
         cursor.execute(
             f"""
             SELECT {DOMAIN_FIELDS}
             FROM enamad_domains
-            ORDER BY updated_at DESC, id DESC
+            ORDER BY source_page ASC, source_row ASC, id ASC
             LIMIT %s OFFSET %s
             """,
             (limit, offset),
@@ -111,6 +112,7 @@ def get_latest_domains(conn, *, offset: int, limit: int) -> list[dict]:
 
 
 def get_newest_by_approve(conn, *, offset: int, limit: int) -> list[dict]:
+    """Newest domains strictly by Enamad issue date (approve_date DESC)."""
     with conn.cursor() as cursor:
         cursor.execute(
             f"""
@@ -249,3 +251,45 @@ def get_domain_services(conn, enamad_id: str, code: str) -> list[dict]:
             (enamad_id, code),
         )
         return list(cursor.fetchall())
+
+
+def get_bot_users(conn, *, offset: int, limit: int) -> list[dict]:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT user_id, username, first_name, last_name,
+                   interaction_count, last_action, first_seen, last_seen
+            FROM bot_users
+            ORDER BY last_seen DESC
+            LIMIT %s OFFSET %s
+            """,
+            (limit, offset),
+        )
+        return list(cursor.fetchall())
+
+
+def count_bot_users(conn) -> int:
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT COUNT(*) AS c FROM bot_users")
+        return int(cursor.fetchone()["c"])
+
+
+def get_bot_user_stats(conn) -> dict:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                COALESCE(SUM(interaction_count), 0) AS interactions,
+                SUM(last_seen >= (NOW() - INTERVAL 1 DAY)) AS active_1d,
+                SUM(last_seen >= (NOW() - INTERVAL 7 DAY)) AS active_7d
+            FROM bot_users
+            """
+        )
+        row = cursor.fetchone() or {}
+    return {
+        "total": int(row.get("total") or 0),
+        "interactions": int(row.get("interactions") or 0),
+        "active_1d": int(row.get("active_1d") or 0),
+        "active_7d": int(row.get("active_7d") or 0),
+    }

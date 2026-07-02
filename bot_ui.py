@@ -37,24 +37,99 @@ def main_menu_text() -> str:
     )
 
 
-def main_menu_keyboard() -> InlineKeyboardMarkup:
+def main_menu_keyboard(*, is_admin: bool = False) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton("🔍 جستجوی دامنه", callback_data="m:search"),
+            InlineKeyboardButton("🆕 تازه‌ترین‌ها", callback_data="m:latest:0"),
+        ],
+        [
+            InlineKeyboardButton("⭐ امتیاز بالا", callback_data="m:top:0"),
+            InlineKeyboardButton("🗺 بر اساس استان", callback_data="m:provinces"),
+        ],
+        [
+            InlineKeyboardButton("📊 آمار دیتابیس", callback_data="m:stats"),
+            InlineKeyboardButton("❓ راهنما", callback_data="m:help"),
+        ],
+    ]
+    if is_admin:
+        rows.append(
+            [InlineKeyboardButton("🛠 پنل مدیریت", callback_data="m:admin")]
+        )
+    return InlineKeyboardMarkup(rows)
+
+
+def admin_panel_text(user_stats: dict) -> str:
+    return (
+        "🛠 <b>پنل مدیریت</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"👥 کل کاربران: <b>{user_stats.get('total', 0):,}</b>\n"
+        f"🟢 فعال ۲۴ ساعت اخیر: <b>{user_stats.get('active_1d', 0):,}</b>\n"
+        f"📅 فعال ۷ روز اخیر: <b>{user_stats.get('active_7d', 0):,}</b>\n"
+        f"💬 مجموع تعاملات: <b>{user_stats.get('interactions', 0):,}</b>\n\n"
+        "یک گزینه را انتخاب کنید 👇"
+    )
+
+
+def admin_panel_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [
-                InlineKeyboardButton("🔍 جستجوی دامنه", callback_data="m:search"),
-                InlineKeyboardButton("🆕 تازه‌ترین‌ها", callback_data="m:latest:0"),
-            ],
-            [
-                InlineKeyboardButton("📅 جدیدترین صدور", callback_data="m:approve:0"),
-                InlineKeyboardButton("⭐ امتیاز بالا", callback_data="m:top:0"),
-            ],
-            [
-                InlineKeyboardButton("🗺 بر اساس استان", callback_data="m:provinces"),
-                InlineKeyboardButton("📊 آمار دیتابیس", callback_data="m:stats"),
-            ],
-            [InlineKeyboardButton("❓ راهنما", callback_data="m:help")],
+            [InlineKeyboardButton("👥 لیست کاربران", callback_data="m:users:0")],
+            [InlineKeyboardButton("🏠 منوی اصلی", callback_data="m:home")],
         ]
     )
+
+
+def _user_display_name(row: dict) -> str:
+    parts = [row.get("first_name") or "", row.get("last_name") or ""]
+    name = " ".join(p for p in parts if p).strip()
+    return name or "—"
+
+
+def users_list_text(rows: list[dict], page: int, total: int) -> str:
+    pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    header = (
+        "👥 <b>کاربران ربات</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"صفحه {page + 1} از {pages}  •  {total:,} کاربر\n"
+    )
+    if not rows:
+        return header + "\n<i>هنوز کاربری ثبت نشده.</i>"
+
+    parts = [header, ""]
+    for index, row in enumerate(rows, start=1):
+        num = page * PAGE_SIZE + index
+        name = esc(_user_display_name(row))
+        username = row.get("username")
+        uname = f" (@{esc(username)})" if username else ""
+        line = (
+            f"<b>{num}.</b> {name}{uname}\n"
+            f"🆔 <code>{row.get('user_id')}</code> · "
+            f"💬 {row.get('interaction_count', 0):,} · "
+            f"🕐 {fmt_date(row.get('last_seen'))}"
+        )
+        parts.append(line)
+        parts.append("")
+    return "\n".join(parts).strip()
+
+
+def users_list_keyboard(page: int, total: int) -> InlineKeyboardMarkup:
+    nav: list[InlineKeyboardButton] = []
+    max_page = max(0, (total - 1) // PAGE_SIZE)
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️ قبلی", callback_data=f"m:users:{page - 1}"))
+    if page < max_page:
+        nav.append(InlineKeyboardButton("بعدی ▶️", callback_data=f"m:users:{page + 1}"))
+    buttons: list[list[InlineKeyboardButton]] = []
+    if nav:
+        buttons.append(nav)
+    buttons.append(
+        [
+            InlineKeyboardButton("🛠 پنل مدیریت", callback_data="m:admin"),
+            InlineKeyboardButton("🏠 منوی اصلی", callback_data="m:home"),
+        ]
+    )
+    return InlineKeyboardMarkup(buttons)
 
 
 def back_home_keyboard() -> InlineKeyboardMarkup:
@@ -77,8 +152,7 @@ def help_text() -> str:
         "❓ <b>راهنما</b>\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
         "🔍 <b>جستجو</b> — دامنه، نام فارسی یا صاحب امتیاز\n"
-        "🆕 <b>تازه‌ترین‌ها</b> — آخرین رکوردهای به‌روز شده در دیتابیس\n"
-        "📅 <b>جدیدترین صدور</b> — بر اساس تاریخ صدور اینماد\n"
+        "🆕 <b>تازه‌ترین‌ها</b> — بر اساس تاریخ صدور اینماد\n"
         "⭐ <b>امتیاز بالا</b> — دامنه‌های ۴ و ۵ ستاره\n"
         "🗺 <b>استان</b> — فیلتر بر اساس استان\n"
         "📊 <b>آمار</b> — وضعیت دیتابیس و اسکرپ\n\n"

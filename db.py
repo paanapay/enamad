@@ -295,6 +295,7 @@ def init_database(cfg: MySQLConfig) -> None:
         conn.commit()
         ensure_domain_detail_columns(conn)
         ensure_services_table(conn)
+        ensure_bot_users_table(conn)
         conn.commit()
     finally:
         conn.close()
@@ -345,6 +346,54 @@ def ensure_services_table(conn) -> None:
                 ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """
+        )
+
+
+def ensure_bot_users_table(conn) -> None:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bot_users (
+              user_id BIGINT NOT NULL,
+              username VARCHAR(255) NULL,
+              first_name VARCHAR(255) NULL,
+              last_name VARCHAR(255) NULL,
+              interaction_count INT UNSIGNED NOT NULL DEFAULT 0,
+              last_action VARCHAR(64) NULL,
+              first_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              last_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              PRIMARY KEY (user_id),
+              KEY idx_bot_users_last_seen (last_seen)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """
+        )
+
+
+def record_bot_user(
+    conn,
+    *,
+    user_id: int,
+    username: str | None = None,
+    first_name: str | None = None,
+    last_name: str | None = None,
+    action: str | None = None,
+) -> None:
+    """Upsert a Telegram user, bumping interaction count and last_seen."""
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO bot_users
+                (user_id, username, first_name, last_name, last_action, interaction_count)
+            VALUES (%s, %s, %s, %s, %s, 1)
+            ON DUPLICATE KEY UPDATE
+                username = VALUES(username),
+                first_name = VALUES(first_name),
+                last_name = VALUES(last_name),
+                last_action = VALUES(last_action),
+                interaction_count = interaction_count + 1,
+                last_seen = CURRENT_TIMESTAMP
+            """,
+            (user_id, username, first_name, last_name, action),
         )
 
 
