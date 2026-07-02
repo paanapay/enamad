@@ -347,9 +347,12 @@ def create_session() -> requests.Session:
 
 
 class EnamadClient:
-    def __init__(self) -> None:
+    def __init__(self, *, quiet: bool = False, timeout: int = 90, retries: int = 3) -> None:
         self.session = create_session()
         self._warmed = False
+        self.quiet = quiet
+        self.timeout = timeout
+        self.retries = retries
 
     def _request(self, method: str, path: str, **kwargs) -> requests.Response:
         url = f"{BASE_URL}{path.lstrip('/')}"
@@ -449,13 +452,14 @@ class EnamadClient:
     def fetch_trustseal_html(self, domain_id: str | int, code: str) -> str:
         """Fetch trust seal page (POST, same as enamad.ir search modal)."""
         last_error: Exception | None = None
-        for attempt in range(1, 4):
+        attempts = max(1, self.retries)
+        for attempt in range(1, attempts + 1):
             try:
                 response = self.session.post(
                     TRUSTSEAL_URL,
                     data={"id": str(domain_id), "Code": code},
                     headers={"Referer": BASE_URL},
-                    timeout=90,
+                    timeout=self.timeout,
                 )
                 response.raise_for_status()
                 return response.text
@@ -463,10 +467,14 @@ class EnamadClient:
                 requests.exceptions.SSLError,
                 requests.exceptions.ConnectionError,
                 requests.exceptions.HTTPError,
+                requests.exceptions.Timeout,
             ) as exc:
                 last_error = exc
+                if attempt >= attempts:
+                    break
                 wait = attempt * 2
-                print(f"  trustseal error (attempt {attempt}/3), waiting {wait}s...")
+                if not self.quiet:
+                    print(f"  trustseal error (attempt {attempt}/{attempts}), waiting {wait}s...")
                 time.sleep(wait)
 
         raise RuntimeError(f"Could not fetch trust seal page: {last_error}") from last_error

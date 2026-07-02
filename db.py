@@ -414,7 +414,9 @@ def refresh_stale_domains_parallel(
     chunks: list[list[dict]] = [rows[i::workers] for i in range(workers)]
 
     def worker(chunk: list[dict]) -> None:
-        client = EnamadClient()
+        # Quiet client with a tighter timeout so one slow request can't stall a
+        # worker for 90s*3; keeps the shared progress bar clean.
+        client = EnamadClient(quiet=True, timeout=25, retries=2)
         conn = connect(cfg)
         processed = 0
         try:
