@@ -1976,6 +1976,7 @@ def main() -> int:
                 domain=domain,
                 limit=args.refresh_limit,
                 delay=delay,
+                progress=True,
             )
             commit_connection(conn)
         scope = domain or "all domains"
@@ -1992,11 +1993,13 @@ def main() -> int:
                 days=args.stale_days,
                 limit=limit,
                 delay=delay,
+                progress=True,
             )
             commit_connection(conn)
+        scope = "all domains" if args.stale_days <= 0 else f">{args.stale_days}d old"
         print(
-            f"Stale refresh (>{args.stale_days}d): {candidates} candidates, "
-            f"{ok} ok, {failed} failed."
+            f"Done. Stale refresh ({scope}): {candidates:,} processed, "
+            f"{ok:,} ok, {failed:,} failed."
         )
         return 0
 

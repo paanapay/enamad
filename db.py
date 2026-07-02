@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import configparser
 import os
+import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -102,12 +103,120 @@ def refresh_domain_trustseal(conn, domain_id: int) -> tuple[dict, list[dict]] | 
     return enriched, services
 
 
+def _format_duration(seconds: float) -> str:
+    if seconds < 0 or seconds == float("inf"):
+        return "-"
+    seconds = int(seconds)
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m"
+    if minutes:
+        return f"{minutes}m {secs:02d}s"
+    return f"{secs}s"
+
+
+def _stdout_tty() -> bool:
+    return sys.stdout.isatty()
+
+
+def _ansi(text: str, *codes: str) -> str:
+    if not _stdout_tty() or not codes:
+        return text
+    return "".join(codes) + text + "\033[0m"
+
+
+def _progress_bar(ratio: float, width: int = 22) -> str:
+    ratio = max(0.0, min(1.0, ratio))
+    filled = int(width * ratio)
+    return "[" + "#" * filled + "-" * (width - filled) + "]"
+
+
+def _progress_step(total: int) -> int:
+    if total <= 50:
+        return 1
+    if total <= 500:
+        return 5
+    if total <= 5000:
+        return 10
+    return 50
+
+
+def _truncate_domain(domain: str | None, width: int = 28) -> str:
+    if not domain:
+        return ""
+    if len(domain) <= width:
+        return domain
+    return domain[: max(0, width - 3)] + "..."
+
+
+def _print_refresh_progress(
+    index: int,
+    total: int,
+    ok: int,
+    failed: int,
+    started: float,
+    *,
+    current_domain: str | None = None,
+    every: int | None = None,
+) -> None:
+    if total <= 0:
+        return
+    step = every if every is not None else _progress_step(total)
+    if index != total and index % step != 0:
+        return
+
+    elapsed = max(0.001, time.time() - started)
+    rate = index / elapsed
+    remaining = total - index
+    eta = remaining / rate if rate > 0 else float("inf")
+    ratio = index / total
+    pct = int(ratio * 100)
+
+    bar = _ansi(_progress_bar(ratio), "\033[36m")
+    counts = (
+        _ansi(f"ok {ok:,}", "\033[32m")
+        + _ansi(" | ", "\033[2m")
+        + (
+            _ansi(f"fail {failed:,}", "\033[31m")
+            if failed
+            else _ansi("fail 0", "\033[2m")
+        )
+    )
+    meta = _ansi(
+        f"{rate:.1f}/s | ETA {_format_duration(eta)}",
+        "\033[2m",
+    )
+    domain_label = _truncate_domain(current_domain)
+    domain_part = (
+        _ansi(f" | {domain_label}", "\033[33m") if domain_label else ""
+    )
+
+    line = (
+        f"{bar}  "
+        f"{index:,}/{total:,}  {pct:>3}%  "
+        f"{counts}  "
+        f"{meta}"
+        f"{domain_part}"
+    )
+
+    # Clear full line first — fixes leftover chars when the new domain is shorter.
+    sys.stdout.write("\033[2K\r")
+    sys.stdout.write(line)
+    sys.stdout.flush()
+    if index == total:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
+
 def refresh_domain_services(
     conn,
     *,
     domain: str | None = None,
     limit: int | None = None,
     delay: float = 0.5,
+    progress: bool = False,
+    commit_every: int = 100,
 ) -> tuple[int, int]:
     """Re-fetch trust seal pages and update services for stored domains."""
     where = "WHERE enamad_id IS NOT NULL AND enamad_id != '' AND code IS NOT NULL AND code != ''"
@@ -130,6 +239,18 @@ def refresh_domain_services(
 
     ok = 0
     failed = 0
+    total = len(rows)
+    started = time.time()
+    if progress and total:
+        print(
+            _ansi(
+                f"Refreshing {total:,} domain(s) from trust seal ...",
+                "\033[1m",
+                "\033[36m",
+            ),
+            flush=True,
+        )
+
     for index, row in enumerate(rows, start=1):
         try:
             result = refresh_domain_trustseal(conn, row["id"])
@@ -139,8 +260,20 @@ def refresh_domain_services(
                 failed += 1
         except Exception:
             failed += 1
-        if delay > 0 and index < len(rows):
+
+        if progress:
+            _print_refresh_progress(
+                index, total, ok, failed, started,
+                current_domain=row.get("domain"),
+            )
+        if commit_every > 0 and index % commit_every == 0:
+            conn.commit()
+
+        if delay > 0 and index < total:
             time.sleep(delay)
+
+    if commit_every > 0:
+        conn.commit()
 
     return ok, failed
 
@@ -151,6 +284,8 @@ def refresh_stale_domains(
     days: int = 30,
     limit: int = 500,
     delay: float = 0.3,
+    progress: bool = False,
+    commit_every: int = 100,
 ) -> tuple[int, int, int]:
     """Refresh domains not updated in the last `days` days (no captcha needed).
 
@@ -159,7 +294,7 @@ def refresh_stale_domains(
     with conn.cursor() as cursor:
         cursor.execute(
             """
-            SELECT id
+            SELECT id, domain
             FROM enamad_domains
             WHERE enamad_id IS NOT NULL AND enamad_id != ''
               AND code IS NOT NULL AND code != ''
@@ -169,22 +304,47 @@ def refresh_stale_domains(
             """,
             (days, limit),
         )
-        ids = [row["id"] for row in cursor.fetchall()]
+        rows = cursor.fetchall()
 
     ok = 0
     failed = 0
-    for index, domain_id in enumerate(ids, start=1):
+    total = len(rows)
+    started = time.time()
+    if progress and total:
+        age_label = f"older than {days}d" if days > 0 else "all domains"
+        print(
+            _ansi(
+                f"Refreshing {total:,} domain(s) from trust seal ({age_label}) ...",
+                "\033[1m",
+                "\033[36m",
+            ),
+            flush=True,
+        )
+
+    for index, row in enumerate(rows, start=1):
         try:
-            if refresh_domain_trustseal(conn, domain_id):
+            if refresh_domain_trustseal(conn, row["id"]):
                 ok += 1
             else:
                 failed += 1
         except Exception:
             failed += 1
-        if delay > 0 and index < len(ids):
+
+        if progress:
+            _print_refresh_progress(
+                index, total, ok, failed, started,
+                current_domain=row.get("domain"),
+            )
+        if commit_every > 0 and index % commit_every == 0:
+            conn.commit()
+
+        if delay > 0 and index < total:
             time.sleep(delay)
 
-    return len(ids), ok, failed
+    if commit_every > 0:
+        conn.commit()
+
+    return total, ok, failed
 
 
 def fix_encoded_domains(conn) -> int:
