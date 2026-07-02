@@ -206,7 +206,30 @@ docker compose run --rm bot python extract_enamad.py --all --workers 4 --chunk-p
 > The scraper must reach `enamad.ir`. `TELEGRAM_PROXY` is only needed if
 > `api.telegram.org` is blocked on the host; on a foreign server leave it empty.
 
-### MySQL unhealthy
+### Telegram proxy in Docker (filtered networks)
+
+If the server cannot reach `api.telegram.org` directly but has a local SOCKS proxy
+(e.g. `curl --socks5 127.0.0.1:10810 https://ipinfo.io` works on the host):
+
+1. In `.env` set `TELEGRAM_PROXY=socks5://127.0.0.1:10810` (your local port).
+2. The `bot` service uses **host network** so `127.0.0.1` inside the container is
+   the server's loopback (where the proxy listens).
+3. MariaDB is published on `127.0.0.1:3307` for the bot to reach the DB.
+
+Restart after changing `.env`:
+
+```bash
+docker compose up -d bot
+docker compose logs -f bot
+```
+
+Test from inside the bot container:
+
+```bash
+docker compose exec bot python -c "import httpx; print(httpx.get('https://api.telegram.org', proxy='socks5://127.0.0.1:10810').status_code)"
+```
+
+---
 
 If `enamad-mysql-1 is unhealthy`:
 
