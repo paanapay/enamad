@@ -32,14 +32,12 @@ from multiprocessing import Manager
 from pathlib import Path
 
 import certifi
-import cv2
-import numpy as np
 import requests
-from PIL import Image, ImageEnhance, ImageOps
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from captcha_learn import CaptchaLearner
+from typing import TYPE_CHECKING
+
 from console_ui import (
     ScrapeConsole,
     ScrapeStats,
@@ -69,6 +67,12 @@ from db import (
     get_worker_progress,
     update_worker_progress,
 )
+
+if TYPE_CHECKING:
+    import numpy as np
+    from PIL import Image
+
+    from captcha_learn import CaptchaLearner
 
 CAPTCHA_LEN = 5  # اینماد تقریباً همیشه ۵ کاراکتر
 
@@ -108,6 +112,15 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     ),
 }
+
+
+def _ocr_libs():
+    """Lazy-load OpenCV / NumPy / Pillow (not needed for --init-db or --refresh-stale)."""
+    import cv2
+    import numpy as np
+    from PIL import Image, ImageEnhance, ImageOps
+
+    return cv2, np, Image, ImageEnhance, ImageOps
 
 
 class CaptchaOcr:
@@ -153,20 +166,23 @@ class CaptchaOcr:
         return len(code) == CAPTCHA_LEN
 
     @staticmethod
-    def _to_bytes(image: Image.Image) -> bytes:
+    def _to_bytes(image: "Image.Image") -> bytes:
+        _, _, Image, _, _ = _ocr_libs()
         buffer = io.BytesIO()
         image.save(buffer, format="JPEG", quality=95)
         return buffer.getvalue()
 
     @staticmethod
-    def _to_bytes_cv(gray: np.ndarray) -> bytes:
+    def _to_bytes_cv(gray: "np.ndarray") -> bytes:
+        cv2, _, _, _, _ = _ocr_libs()
         ok, encoded = cv2.imencode(".jpg", gray)
         if not ok:
             raise RuntimeError("encode تصویر کپچا ناموفق بود.")
         return encoded.tobytes()
 
     @staticmethod
-    def _focus_crops(base: Image.Image) -> list[Image.Image]:
+    def _focus_crops(base: "Image.Image") -> list["Image.Image"]:
+        _, _, Image, _, _ = _ocr_libs()
         """برش نواحی اصلی؛ حذف واترمارک پایین و متن گمراه‌کننده راست."""
         width, height = base.size
         return [
@@ -184,7 +200,8 @@ class CaptchaOcr:
         ]
 
     @staticmethod
-    def _remove_small_components(gray: np.ndarray) -> np.ndarray:
+    def _remove_small_components(gray: "np.ndarray") -> "np.ndarray":
+        cv2, np, _, _, _ = _ocr_libs()
         """حذف نوشته‌های ریز (واترمارک پایین و کنار)."""
         inverted = cv2.bitwise_not(gray)
         _, binary = cv2.threshold(inverted, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -209,7 +226,8 @@ class CaptchaOcr:
             return gray
         return cv2.bitwise_not(mask)
 
-    def _enhance_crop(self, crop: Image.Image, scale: int = 3) -> list[bytes]:
+    def _enhance_crop(self, crop: "Image.Image", scale: int = 3) -> list[bytes]:
+        cv2, np, Image, ImageEnhance, ImageOps = _ocr_libs()
         outputs: list[bytes] = []
         width, height = crop.size
         big = crop.resize((width * scale, height * scale), Image.Resampling.LANCZOS)
@@ -232,6 +250,7 @@ class CaptchaOcr:
         self, image_bytes: bytes, fast: bool = False
     ) -> list[tuple[bytes, int]]:
         """(bytes, weight) — وزن بیشتر = برش دقیق‌تر روی متن اصلی."""
+        _, _, Image, _, _ = _ocr_libs()
         weighted: list[tuple[bytes, int]] = []
         base = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
@@ -1193,6 +1212,8 @@ def run_list_scrape(
         if use_pretty:
             ui.line(paint("OCR ready.", C.GREEN))
 
+    from captcha_learn import CaptchaLearner
+
     learner = CaptchaLearner(
         learn_path_for_worker(worker_id),
         enabled=not options.no_learn,
@@ -1680,6 +1701,8 @@ def run_parallel_scrape(
 
 def discover_total_pages(retries: int, fast_ocr: bool) -> int | None:
     """Solve one captcha on page 1 to read the current total page count."""
+    from captcha_learn import CaptchaLearner
+
     ocr = CaptchaOcr()
     learner = CaptchaLearner(learn_path_for_worker(None), enabled=True)
     client = EnamadClient()

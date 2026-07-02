@@ -1,7 +1,9 @@
 requests>=2.31.0
 certifi>=2024.0.0
+# NumPy 2.x wheels require x86-64-v2; pin 1.x for older VPS CPUs.
+numpy>=1.26.0,<2
 ddddocr>=1.6.0
-opencv-python>=4.8.0
+opencv-python-headless>=4.8.0,<4.10
 Pillow>=10.0.0
 PyMySQL>=1.1.0
 python-telegram-bot>=21.0

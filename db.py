@@ -595,13 +595,22 @@ def load_config(path: Path | None = None) -> AppConfig:
     return AppConfig(mysql=mysql, scraper=scraper)
 
 
-def connect(cfg: MySQLConfig, database: str | None = None):
+_NO_DATABASE = object()
+
+
+def connect(cfg: MySQLConfig, database=_NO_DATABASE):
+    # Pass database=None explicitly to connect WITHOUT selecting a schema
+    # (needed by init_database before the DB exists). Omit it to use cfg.database.
+    if database is _NO_DATABASE:
+        db_name = cfg.database
+    else:
+        db_name = database
     return pymysql.connect(
         host=cfg.host,
         port=cfg.port,
         user=cfg.user,
         password=cfg.password,
-        database=database or cfg.database,
+        database=db_name,
         charset="utf8mb4",
         cursorclass=DictCursor,
         autocommit=False,
