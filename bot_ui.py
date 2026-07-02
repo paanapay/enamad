@@ -6,7 +6,7 @@ from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-PAGE_SIZE = 5
+PAGE_SIZE = 10
 
 
 def esc(value: Any) -> str:
@@ -222,6 +222,17 @@ def list_header(title: str, page: int, total: int) -> str:
     )
 
 
+def domain_list_line(num: int, row: dict) -> str:
+    """Compact list entry: number + name + domain + approve date."""
+    domain = esc(row.get("domain") or "—")
+    name = esc(row.get("business_name") or "—")
+    approve = row.get("approve_date")
+    second = f"🌐 <code>{domain}</code>"
+    if approve:
+        second += f" · 📅 {esc(approve)}"
+    return f"<b>{num}.</b> {name}\n{second}"
+
+
 def domain_list_text(title: str, rows: list[dict], page: int, total: int) -> str:
     if not rows:
         return f"{title}\n\n<i>موردی یافت نشد.</i>"
@@ -229,8 +240,7 @@ def domain_list_text(title: str, rows: list[dict], page: int, total: int) -> str
     parts = [list_header(title, page, total), ""]
     for index, row in enumerate(rows, start=1):
         num = page * PAGE_SIZE + index
-        parts.append(f"<b>{num}.</b>")
-        parts.append(domain_card(row, compact=True))
+        parts.append(domain_list_line(num, row))
         parts.append("")
     return "\n".join(parts).strip()
 
