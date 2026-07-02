@@ -206,6 +206,29 @@ docker compose run --rm bot python extract_enamad.py --all --workers 4 --chunk-p
 > The scraper must reach `enamad.ir`. `TELEGRAM_PROXY` is only needed if
 > `api.telegram.org` is blocked on the host; on a foreign server leave it empty.
 
+### MySQL unhealthy
+
+If `enamad-mysql-1 is unhealthy`:
+
+```bash
+docker compose logs mysql --tail 80
+```
+
+Common causes:
+
+| Cause | Fix |
+|-------|-----|
+| First start still initializing | Wait ~60s and run `docker compose up -d` again |
+| Wrong / changed `MYSQL_PASSWORD` after volume was created | Use the original password, or reset: `docker compose down -v` (deletes DB!) then `up` again |
+| Low RAM on VPS | The compose file limits InnoDB to 128M; ensure at least ~512MB free for MySQL |
+| Corrupted volume | `docker compose down -v` then recreate (loses data) |
+
+Check health manually:
+
+```bash
+docker compose exec mysql mysqladmin ping -h 127.0.0.1 -uroot -p
+```
+
 ---
 
 ## Telegram bot

@@ -6,15 +6,19 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-changeme}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-enamad}
       TZ: ${TZ:-Asia/Tehran}
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --innodb-buffer-pool-size=128M
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_PASSWORD:-changeme}"]
+      # Use the password inside the container (not compose-time substitution).
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" || exit 1"]
       interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
+      timeout: 10s
+      retries: 12
+      start_period: 60s
 
   # One-shot: create database schema, then exit.
   init:
