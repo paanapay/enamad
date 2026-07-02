@@ -1830,6 +1830,11 @@ def parse_args() -> argparse.Namespace:
         help="With --refresh-stale: parallel worker threads (default: 1, no captcha)",
     )
     parser.add_argument(
+        "--missing-only",
+        action="store_true",
+        help="With --refresh-stale: only refresh domains missing address/phone/email",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
         help="Fetch all pages until the end of the list",
@@ -2011,6 +2016,7 @@ def main() -> int:
                 workers=refresh_workers,
                 delay=delay,
                 progress=True,
+                missing_only=args.missing_only,
             )
         else:
             delay = args.delay if args.delay is not None else 0.3
@@ -2021,9 +2027,13 @@ def main() -> int:
                     limit=limit,
                     delay=delay,
                     progress=True,
+                    missing_only=args.missing_only,
                 )
                 commit_connection(conn)
-        scope = "all domains" if args.stale_days <= 0 else f">{args.stale_days}d old"
+        if args.missing_only:
+            scope = "missing details"
+        else:
+            scope = "all domains" if args.stale_days <= 0 else f">{args.stale_days}d old"
         print(
             f"Done. Stale refresh ({scope}): {candidates:,} processed, "
             f"{ok:,} ok, {failed:,} failed."

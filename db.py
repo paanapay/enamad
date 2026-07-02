@@ -289,32 +289,24 @@ def refresh_stale_domains(
     delay: float = 0.3,
     progress: bool = False,
     commit_every: int = 100,
+    missing_only: bool = False,
 ) -> tuple[int, int, int]:
     """Refresh domains not updated in the last `days` days (no captcha needed).
 
     Returns (candidates, ok, failed). Oldest `updated_at` is refreshed first.
+    With `missing_only`, only rows lacking address/phone/email are picked.
     """
-    with conn.cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT id, domain
-            FROM enamad_domains
-            WHERE enamad_id IS NOT NULL AND enamad_id != ''
-              AND code IS NOT NULL AND code != ''
-              AND (updated_at IS NULL OR updated_at < (NOW() - INTERVAL %s DAY))
-            ORDER BY updated_at ASC
-            LIMIT %s
-            """,
-            (days, limit),
-        )
-        rows = cursor.fetchall()
+    rows = _select_stale_ids(conn, days, limit, missing_only=missing_only)
 
     ok = 0
     failed = 0
     total = len(rows)
     started = time.time()
     if progress and total:
-        age_label = f"older than {days}d" if days > 0 else "all domains"
+        if missing_only:
+            age_label = "missing details"
+        else:
+            age_label = f"older than {days}d" if days > 0 else "all domains"
         print(
             _ansi(
                 f"Refreshing {total:,} domain(s) from trust seal ({age_label}) ...",
@@ -350,19 +342,44 @@ def refresh_stale_domains(
     return total, ok, failed
 
 
-def _select_stale_ids(conn, days: int, limit: int) -> list[dict]:
+def _select_stale_ids(
+    conn, days: int, limit: int, *, missing_only: bool = False
+) -> list[dict]:
+    """Pick domains to refresh.
+
+    - Normal: those not updated in the last `days` days (oldest first).
+    - missing_only: only rows lacking contact details (address/phone/email),
+      regardless of `updated_at`.
+    """
+    if missing_only:
+        where = (
+            "enamad_id IS NOT NULL AND enamad_id != '' "
+            "AND code IS NOT NULL AND code != '' "
+            "AND ("
+            "  business_address IS NULL OR business_address = '' "
+            "  OR phone IS NULL OR phone = '' "
+            "  OR email IS NULL OR email = ''"
+            ")"
+        )
+        params: tuple = (limit,)
+    else:
+        where = (
+            "enamad_id IS NOT NULL AND enamad_id != '' "
+            "AND code IS NOT NULL AND code != '' "
+            "AND (updated_at IS NULL OR updated_at < (NOW() - INTERVAL %s DAY))"
+        )
+        params = (days, limit)
+
     with conn.cursor() as cursor:
         cursor.execute(
-            """
+            f"""
             SELECT id, domain
             FROM enamad_domains
-            WHERE enamad_id IS NOT NULL AND enamad_id != ''
-              AND code IS NOT NULL AND code != ''
-              AND (updated_at IS NULL OR updated_at < (NOW() - INTERVAL %s DAY))
+            WHERE {where}
             ORDER BY updated_at ASC
             LIMIT %s
             """,
-            (days, limit),
+            params,
         )
         return list(cursor.fetchall())
 
@@ -376,6 +393,7 @@ def refresh_stale_domains_parallel(
     delay: float = 0.0,
     progress: bool = False,
     commit_every: int = 50,
+    missing_only: bool = False,
 ) -> tuple[int, int, int]:
     """Parallel version of refresh_stale_domains using threads.
 
@@ -387,7 +405,7 @@ def refresh_stale_domains_parallel(
     from extract_enamad import EnamadClient
 
     with mysql_connection(cfg) as conn:
-        rows = _select_stale_ids(conn, days, limit)
+        rows = _select_stale_ids(conn, days, limit, missing_only=missing_only)
 
     total = len(rows)
     if total == 0:
@@ -396,7 +414,10 @@ def refresh_stale_domains_parallel(
     workers = max(1, min(workers, total))
     started = time.time()
     if progress:
-        age_label = f"older than {days}d" if days > 0 else "all domains"
+        if missing_only:
+            age_label = "missing details"
+        else:
+            age_label = f"older than {days}d" if days > 0 else "all domains"
         print(
             _ansi(
                 f"Refreshing {total:,} domain(s) from trust seal "
