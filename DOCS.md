@@ -97,6 +97,7 @@ Every value can also be provided via environment variables (used by Docker):
 | `--update-overlap N` | With `--update`: re-scan N pages before the old total (default 5) |
 | `--refresh-stale` | Refresh existing domains via trust seal (no captcha) |
 | `--stale-days N` | With `--refresh-stale`: refresh domains older than N days (default 30; `0` = all) |
+| `--refresh-workers N` | With `--refresh-stale`: parallel worker threads (default 1). No captcha, so scales well |
 | `--refresh-services [DOMAIN]` | Re-fetch trust seal + all licenses (one domain, or all) |
 | `--refresh-limit N` | Cap domains per refresh run |
 | `--search DOMAIN` | Look up one domain via `/Home/GetData` |
@@ -149,6 +150,9 @@ python extract_enamad.py --refresh-stale --stale-days 30 --refresh-limit 500
 
 # ignore age — refresh everything (large!)
 python extract_enamad.py --refresh-stale --stale-days 0 --refresh-limit 500000
+
+# much faster with parallel workers (no captcha, so safe to raise)
+python extract_enamad.py --refresh-stale --stale-days 0 --refresh-limit 500000 --refresh-workers 8 --delay 0
 
 # one specific domain + its licenses
 python extract_enamad.py --refresh-services digikala.com

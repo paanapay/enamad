@@ -56,6 +56,7 @@ from db import (
     fix_encoded_domains,
     refresh_domain_services,
     refresh_stale_domains,
+    refresh_stale_domains_parallel,
     get_scrape_state,
     init_database,
     load_config,
@@ -1815,6 +1816,12 @@ def parse_args() -> argparse.Namespace:
         help="With --refresh-stale: refresh domains older than N days (default: 30)",
     )
     parser.add_argument(
+        "--refresh-workers",
+        type=int,
+        default=1,
+        help="With --refresh-stale: parallel worker threads (default: 1, no captcha)",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
         help="Fetch all pages until the end of the list",
@@ -1986,16 +1993,28 @@ def main() -> int:
     if args.refresh_stale:
         app_config = load_config(config_path)
         limit = args.refresh_limit if args.refresh_limit is not None else 500
-        delay = args.delay if args.delay is not None else 0.3
-        with mysql_connection(app_config.mysql) as conn:
-            candidates, ok, failed = refresh_stale_domains(
-                conn,
+        refresh_workers = max(1, args.refresh_workers)
+        if refresh_workers > 1:
+            delay = args.delay if args.delay is not None else 0.0
+            candidates, ok, failed = refresh_stale_domains_parallel(
+                app_config.mysql,
                 days=args.stale_days,
                 limit=limit,
+                workers=refresh_workers,
                 delay=delay,
                 progress=True,
             )
-            commit_connection(conn)
+        else:
+            delay = args.delay if args.delay is not None else 0.3
+            with mysql_connection(app_config.mysql) as conn:
+                candidates, ok, failed = refresh_stale_domains(
+                    conn,
+                    days=args.stale_days,
+                    limit=limit,
+                    delay=delay,
+                    progress=True,
+                )
+                commit_connection(conn)
         scope = "all domains" if args.stale_days <= 0 else f">{args.stale_days}d old"
         print(
             f"Done. Stale refresh ({scope}): {candidates:,} processed, "

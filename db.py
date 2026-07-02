@@ -58,8 +58,11 @@ def normalize_domain(domain: str) -> str:
     return value.split("/")[0].split("?")[0].split("#")[0].strip()
 
 
-def refresh_domain_trustseal(conn, domain_id: int) -> tuple[dict, list[dict]] | None:
-    """Fetch trust seal page and refresh contact info + all services in DB."""
+def refresh_domain_trustseal(conn, domain_id: int, client=None) -> tuple[dict, list[dict]] | None:
+    """Fetch trust seal page and refresh contact info + all services in DB.
+
+    Pass a reused `client` (EnamadClient) to enable HTTP keep-alive across calls.
+    """
     from extract_enamad import EnamadClient, TRUSTSEAL_LABELS
 
     with conn.cursor() as cursor:
@@ -78,7 +81,8 @@ def refresh_domain_trustseal(conn, domain_id: int) -> tuple[dict, list[dict]] | 
     if not row or not row.get("enamad_id") or not row.get("code"):
         return None
 
-    client = EnamadClient()
+    if client is None:
+        client = EnamadClient()
     details = client.fetch_trustseal_details(row["enamad_id"], row["code"])
     enriched = dict(row)
     for field in TRUSTSEAL_LABELS.values():
@@ -137,9 +141,7 @@ def _progress_step(total: int) -> int:
         return 1
     if total <= 500:
         return 5
-    if total <= 5000:
-        return 10
-    return 50
+    return 10
 
 
 def _truncate_domain(domain: str | None, width: int = 28) -> str:
@@ -163,7 +165,8 @@ def _print_refresh_progress(
     if total <= 0:
         return
     step = every if every is not None else _progress_step(total)
-    if index != total and index % step != 0:
+    # Always show the very first item so the user sees activity immediately.
+    if index != 1 and index != total and index % step != 0:
         return
 
     elapsed = max(0.001, time.time() - started)
@@ -345,6 +348,110 @@ def refresh_stale_domains(
         conn.commit()
 
     return total, ok, failed
+
+
+def _select_stale_ids(conn, days: int, limit: int) -> list[dict]:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT id, domain
+            FROM enamad_domains
+            WHERE enamad_id IS NOT NULL AND enamad_id != ''
+              AND code IS NOT NULL AND code != ''
+              AND (updated_at IS NULL OR updated_at < (NOW() - INTERVAL %s DAY))
+            ORDER BY updated_at ASC
+            LIMIT %s
+            """,
+            (days, limit),
+        )
+        return list(cursor.fetchall())
+
+
+def refresh_stale_domains_parallel(
+    cfg: "MySQLConfig",
+    *,
+    days: int = 30,
+    limit: int = 500,
+    workers: int = 4,
+    delay: float = 0.0,
+    progress: bool = False,
+    commit_every: int = 50,
+) -> tuple[int, int, int]:
+    """Parallel version of refresh_stale_domains using threads.
+
+    Each worker owns its own DB connection and HTTP client (keep-alive).
+    Refresh is I/O-bound (no captcha), so threads scale well.
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from extract_enamad import EnamadClient
+
+    with mysql_connection(cfg) as conn:
+        rows = _select_stale_ids(conn, days, limit)
+
+    total = len(rows)
+    if total == 0:
+        return 0, 0, 0
+
+    workers = max(1, min(workers, total))
+    started = time.time()
+    if progress:
+        age_label = f"older than {days}d" if days > 0 else "all domains"
+        print(
+            _ansi(
+                f"Refreshing {total:,} domain(s) from trust seal "
+                f"({age_label}) with {workers} workers ...",
+                "\033[1m",
+                "\033[36m",
+            ),
+            flush=True,
+        )
+
+    lock = threading.Lock()
+    counters = {"done": 0, "ok": 0, "failed": 0}
+
+    # Round-robin split keeps oldest-first order roughly balanced per worker.
+    chunks: list[list[dict]] = [rows[i::workers] for i in range(workers)]
+
+    def worker(chunk: list[dict]) -> None:
+        client = EnamadClient()
+        conn = connect(cfg)
+        processed = 0
+        try:
+            for row in chunk:
+                try:
+                    result = refresh_domain_trustseal(conn, row["id"], client=client)
+                    success = bool(result)
+                except Exception:
+                    success = False
+                processed += 1
+                if commit_every > 0 and processed % commit_every == 0:
+                    conn.commit()
+
+                with lock:
+                    counters["done"] += 1
+                    if success:
+                        counters["ok"] += 1
+                    else:
+                        counters["failed"] += 1
+                    if progress:
+                        _print_refresh_progress(
+                            counters["done"], total,
+                            counters["ok"], counters["failed"], started,
+                            current_domain=row.get("domain"),
+                        )
+                if delay > 0:
+                    time.sleep(delay)
+            conn.commit()
+        finally:
+            conn.close()
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(worker, chunk) for chunk in chunks if chunk]
+        for future in futures:
+            future.result()
+
+    return total, counters["ok"], counters["failed"]
 
 
 def fix_encoded_domains(conn) -> int:
