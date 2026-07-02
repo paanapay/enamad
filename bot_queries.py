@@ -28,10 +28,43 @@ def get_stats(conn) -> dict[str, Any]:
             """
             SELECT state_key, state_value
             FROM scraper_state
-            WHERE state_key IN ('last_completed_page', 'total_pages')
             """
         )
-        scrape_rows = {row["state_key"]: row["state_value"] for row in cursor.fetchall()}
+        all_state = {row["state_key"]: row["state_value"] for row in cursor.fetchall()}
+
+        cursor.execute(
+            """
+            SELECT MAX(source_page) AS max_page,
+                   COUNT(DISTINCT source_page) AS distinct_pages
+            FROM enamad_domains
+            WHERE source_page IS NOT NULL
+            """
+        )
+        page_coverage = cursor.fetchone() or {}
+
+        worker_pages: list[int] = []
+        for key, value in all_state.items():
+            if key.startswith("parallel_w") and key.endswith("_last"):
+                try:
+                    worker_pages.append(int(value))
+                except (TypeError, ValueError):
+                    continue
+
+        total_pages_raw = all_state.get("total_pages")
+        total_pages = int(total_pages_raw) if total_pages_raw else None
+        global_last = int(all_state.get("last_completed_page") or 0)
+        worker_max = max(worker_pages) if worker_pages else 0
+        max_source = int(page_coverage.get("max_page") or 0)
+        distinct_pages = int(page_coverage.get("distinct_pages") or 0)
+        effective_last = max(global_last, worker_max, max_source)
+
+        scrape_rows = {
+            "last_completed_page": str(global_last),
+            "total_pages": total_pages_raw,
+            "effective_last_page": effective_last,
+            "distinct_pages_in_db": distinct_pages,
+            "worker_count": len(worker_pages),
+        }
 
         cursor.execute(
             """
@@ -42,6 +75,17 @@ def get_stats(conn) -> dict[str, Any]:
             """
         )
         last_run = cursor.fetchone()
+
+        cursor.execute(
+            """
+            SELECT pages_fetched, records_saved, status, started_at, finished_at
+            FROM scrape_runs
+            WHERE pages_fetched >= 10
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        )
+        last_major_run = cursor.fetchone()
 
         cursor.execute(
             """
@@ -56,6 +100,7 @@ def get_stats(conn) -> dict[str, Any]:
         "rated": rated,
         "scrape": scrape_rows,
         "last_run": last_run,
+        "last_major_run": last_major_run,
         "last_update": last_update,
     }
 

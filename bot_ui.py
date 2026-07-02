@@ -160,35 +160,62 @@ def help_text() -> str:
 def stats_text(stats: dict) -> str:
     scrape = stats.get("scrape") or {}
     last_run = stats.get("last_run")
+    last_major = stats.get("last_major_run")
     lines = [
         "📊 <b>آمار دیتابیس</b>",
         f"📦 کل دامنه‌ها: <b>{stats.get('total', 0):,}</b>",
         f"⭐ دارای امتیاز: <b>{stats.get('rated', 0):,}</b>",
     ]
 
-    last_page = scrape.get("last_completed_page")
     total_pages = scrape.get("total_pages")
-    if last_page and total_pages:
-        pct = int(last_page) * 100 // max(1, int(total_pages))
-        lines.append(f"📄 پیشرفت اسکرپ: <b>{last_page}</b> / {total_pages} ({pct}%)")
-    elif total_pages:
-        lines.append(f"📄 کل صفحات شناخته‌شده: <b>{total_pages}</b>")
+    effective_last = int(scrape.get("effective_last_page") or 0)
+    distinct_pages = int(scrape.get("distinct_pages_in_db") or 0)
+
+    if total_pages:
+        total_pages_int = int(total_pages)
+        pct = effective_last * 100 // max(1, total_pages_int)
+        lines.append(
+            f"📄 پیشرفت اسکرپ: <b>{effective_last:,}</b> / {total_pages_int:,} ({pct}%)"
+        )
+        if distinct_pages and distinct_pages != effective_last:
+            cover = distinct_pages * 100 // max(1, total_pages_int)
+            lines.append(
+                f"📑 صفحات پوشش‌داده‌شده در DB: <b>{distinct_pages:,}</b> ({cover}%)"
+            )
+    elif effective_last:
+        lines.append(f"📄 آخرین صفحه اسکرپ‌شده: <b>{effective_last:,}</b>")
 
     if stats.get("last_update"):
         lines.append(f"🕐 آخرین به‌روزرسانی: {fmt_date(stats['last_update'])}")
 
-    if last_run:
+    display_run = last_major or last_run
+    if display_run:
         lines.extend(
             [
                 "",
                 "<b>آخرین اجرای اسکرپر</b>",
-                f"• وضعیت: {esc(last_run.get('status', '—'))}",
-                f"• صفحات: {last_run.get('pages_fetched', 0):,}",
-                f"• رکوردها: {last_run.get('records_saved', 0):,}",
+                f"• وضعیت: {esc(display_run.get('status', '—'))}",
+                f"• صفحات: {display_run.get('pages_fetched', 0):,}",
+                f"• رکوردها: {display_run.get('records_saved', 0):,}",
             ]
         )
-        if last_run.get("finished_at"):
-            lines.append(f"• پایان: {fmt_date(last_run['finished_at'])}")
+        if display_run.get("finished_at"):
+            lines.append(f"• پایان: {fmt_date(display_run['finished_at'])}")
+
+    if (
+        last_run
+        and last_major
+        and last_run is not last_major
+        and int(last_run.get("pages_fetched") or 0) < 10
+    ):
+        lines.extend(
+            [
+                "",
+                f"<i>آخرین اجرای کوچک: {last_run.get('pages_fetched', 0):,} صفحه، "
+                f"{last_run.get('records_saved', 0):,} رکورد "
+                f"({fmt_date(last_run.get('finished_at'))})</i>",
+            ]
+        )
 
     return "\n".join(lines)
 
