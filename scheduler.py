@@ -51,7 +51,7 @@ def _env(*keys: str) -> str | None:
 class SchedulerConfig:
     timezone: str
     update_cron: str
-    update_overlap: int
+    update_pages: int
     update_workers: int
     update_chunk_pages: int
     refresh_cron: str
@@ -82,7 +82,7 @@ def load_scheduler_config(path: Path) -> SchedulerConfig:
     return SchedulerConfig(
         timezone=get("timezone", "Asia/Tehran"),
         update_cron=get("update_cron", "0 3 * * *"),
-        update_overlap=get_int("update_overlap", 5),
+        update_pages=get_int("update_pages", 50),
         update_workers=get_int("update_workers", 1),
         update_chunk_pages=get_int("update_chunk_pages", 10),
         refresh_cron=get("refresh_cron", "0 */6 * * *"),
@@ -114,7 +114,7 @@ def make_update_job(cfg: SchedulerConfig, config_path: Path):
     def job() -> None:
         args = [
             "--update",
-            "--update-overlap", str(cfg.update_overlap),
+            "--update-pages", str(cfg.update_pages),
             "--workers", str(cfg.update_workers),
             "--chunk-pages", str(cfg.update_chunk_pages),
         ]

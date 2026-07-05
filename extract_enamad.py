@@ -1731,36 +1731,23 @@ def run_update(
     config_path: Path,
     max_pages_per_chunk: int,
 ) -> int:
-    """Incrementally fetch only newly-added pages at the tail of the list.
+    """Fetch likely-new domains by re-scanning the first pages of the enamad list.
 
-    New Enamad approvals are appended at the end of the list, so we only need to
-    re-scrape the last known pages (plus an overlap) up to the new total.
+    New approvals tend to appear near the front of the list (not the tail), so
+    re-scraping the first `update_pages` pages is the cheap incremental strategy.
+    Existing rows are upserted; new domains are inserted.
     """
     delay = args.delay if args.delay is not None else app_config.scraper.delay
     retries = args.retries if args.retries is not None else app_config.scraper.retries
-    overlap = max(0, args.update_overlap)
+    update_pages = max(1, args.update_pages)
 
-    with mysql_connection(app_config.mysql) as conn:
-        state = get_scrape_state(conn)
-    old_total = state.get("total_pages")
-
-    print(paint("Discovering current total pages (1 captcha)...", C.CYAN))
-    current_total = discover_total_pages(retries, args.fast_ocr)
-    if not current_total or current_total < 1:
-        print("Could not determine total pages from Enamad.", file=sys.stderr)
-        return 1
-
-    base = old_total if old_total else current_total
-    start_page = max(1, min(base, current_total) - overlap + 1)
-    end_page = current_total
-
-    new_pages = max(0, current_total - old_total) if old_total else 0
+    start_page = 1
+    end_page = update_pages
     print(
         paint(
-            f"Total pages: {fmt_int(old_total) if old_total else '?'} -> {fmt_int(current_total)}"
-            f"  ({new_pages} new)  scanning pages {fmt_int(start_page)}-{fmt_int(end_page)}"
-            f" (overlap {overlap})",
-            C.WHITE,
+            f"Update: scanning first {fmt_int(update_pages)} page(s) "
+            f"(pages {fmt_int(start_page)}-{fmt_int(end_page)}) for new domains …",
+            C.CYAN,
         )
     )
 
@@ -1784,10 +1771,6 @@ def run_update(
         reset=False,
     )
     result = run_list_scrape(options)
-
-    with mysql_connection(app_config.mysql) as conn:
-        update_scrape_progress(conn, current_total, current_total)
-        commit_connection(conn)
 
     saved = int(result.get("records_saved") or 0) if isinstance(result, dict) else 0
     print(paint(f"Update done. {fmt_int(saved)} records touched.", C.GREEN, C.BOLD))
@@ -1827,13 +1810,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--update",
         action="store_true",
-        help="Incremental: fetch only newly-added tail pages up to the new total",
+        help="Incremental: re-scan first pages of the list for new domains",
+    )
+    parser.add_argument(
+        "--update-pages",
+        type=int,
+        default=50,
+        help="With --update: how many initial pages to re-scan (default: 50)",
     )
     parser.add_argument(
         "--update-overlap",
         type=int,
-        default=5,
-        help="With --update: re-scan this many pages before the old total (default: 5)",
+        default=None,
+        help="Deprecated alias for --update-pages",
     )
     parser.add_argument(
         "--refresh-stale",
@@ -2079,6 +2068,8 @@ def main() -> int:
     max_pages_per_chunk = chunk_pages
 
     if args.update:
+        if args.update_overlap is not None:
+            args.update_pages = args.update_overlap
         return run_update(args, app_config, config_path, max_pages_per_chunk)
 
     if args.workers > 1:
