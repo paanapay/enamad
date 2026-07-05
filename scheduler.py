@@ -57,6 +57,8 @@ class SchedulerConfig:
     refresh_cron: str
     refresh_days: int
     refresh_limit: int
+    refresh_workers: int
+    refresh_missing_only: bool
     run_on_start: bool
     enable_update: bool
     enable_refresh: bool
@@ -86,6 +88,8 @@ def load_scheduler_config(path: Path) -> SchedulerConfig:
         refresh_cron=get("refresh_cron", "0 */6 * * *"),
         refresh_days=get_int("refresh_days", 30),
         refresh_limit=get_int("refresh_limit", 500),
+        refresh_workers=get_int("refresh_workers", 4),
+        refresh_missing_only=get_bool("refresh_missing_only", False),
         run_on_start=get_bool("run_on_start", False),
         enable_update=get_bool("enable_update", True),
         enable_refresh=get_bool("enable_refresh", True),
@@ -125,7 +129,11 @@ def make_refresh_job(cfg: SchedulerConfig, config_path: Path):
             "--refresh-stale",
             "--stale-days", str(cfg.refresh_days),
             "--refresh-limit", str(cfg.refresh_limit),
+            "--refresh-workers", str(cfg.refresh_workers),
+            "--delay", "0",
         ]
+        if cfg.refresh_missing_only:
+            args.append("--missing-only")
         _run("refresh-stale", args, config_path)
 
     return job
@@ -166,7 +174,12 @@ def main() -> int:
             max_instances=1,
             coalesce=True,
         )
-        log.info("Scheduled 'refresh-stale' with cron '%s' (%s).", cfg.refresh_cron, cfg.timezone)
+        log.info(
+            "Scheduled 'refresh-stale' with cron '%s' (%s)%s.",
+            cfg.refresh_cron,
+            cfg.timezone,
+            " [missing-only]" if cfg.refresh_missing_only else "",
+        )
 
     if not scheduler.get_jobs():
         log.error("No jobs enabled. Set enable_update/enable_refresh in [scheduler].")
