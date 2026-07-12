@@ -21,7 +21,7 @@ from flask import (
 import bot_queries as q
 from crm_db import ROLE_SUPER, authenticate_admin, ensure_crm_tables, CALL_OUTCOMES
 from crm_panel import crm_bp
-from db import load_config, mysql_connection
+from db import ensure_domain_detail_columns, load_config, mysql_connection
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("WEB_SECRET_KEY") or secrets.token_hex(32)
@@ -44,7 +44,9 @@ def app_config():
 
 def _ensure_schema():
     with mysql_connection(app_config().mysql) as conn:
+        ensure_domain_detail_columns(conn)
         ensure_crm_tables(conn)
+        conn.commit()
 
 
 def login_required(view):
