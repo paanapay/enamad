@@ -80,6 +80,25 @@ services:
       init:
         condition: service_completed_successfully
 
+  web:
+    build: .
+    # Admin web panel (Flask via gunicorn). Bound to localhost; the host's
+    # nginx reverse-proxies enamad.paanapay.com -> 127.0.0.1:8095.
+    command: >
+      gunicorn --bind 127.0.0.1:8095 --workers 2 --timeout 120 webapp:app
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      <<: *app_env
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: "3307"
+      WEB_ADMIN_PASSWORD: ${WEB_ADMIN_PASSWORD:-}
+      WEB_SECRET_KEY: ${WEB_SECRET_KEY:-}
+      WEB_LIVE_SEARCH: ${WEB_LIVE_SEARCH:-yes}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
   scheduler:
     build: .
     command: python scheduler.py

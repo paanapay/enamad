@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% set active = 'users' %}
+{% block title %}کاربران ربات{% endblock %}
+{% block body %}
+<h1>کاربران ربات <span class="muted" style="font-size:15px">({{ total|group }})</span></h1>
+<div class="panel" style="padding:0;overflow:auto">
+  <table>
+    <thead>
+      <tr><th>پلتفرم</th><th>کاربر</th><th>شناسه</th><th>تعامل</th><th>آخرین اقدام</th><th>آخرین بازدید</th></tr>
+    </thead>
+    <tbody>
+      {% for u in rows %}
+      <tr>
+        <td><span class="tag">{{ u.platform }}</span></td>
+        <td>{{ u.first_name or '' }} {{ u.last_name or '' }}
+          {% if u.username %}<div class="muted mono" style="font-size:12px">@{{ u.username }}</div>{% endif %}</td>
+        <td class="mono">{{ u.user_id }}</td>
+        <td>{{ u.interaction_count|group }}</td>
+        <td class="mono">{{ u.last_action or '—' }}</td>
+        <td class="mono">{{ u.last_seen or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="empty">کاربری ثبت نشده.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="pager">
+  {% if page > 0 %}<a href="{{ url_for('users', page=page-1) }}">قبلی ›</a>{% else %}<span class="disabled">قبلی ›</span>{% endif %}
+  <span>صفحه {{ (page+1)|group }} از {{ (pages if pages else 1)|group }}</span>
+  {% if page + 1 < pages %}<a href="{{ url_for('users', page=page+1) }}">‹ بعدی</a>{% else %}<span class="disabled">‹ بعدی</span>{% endif %}
+</div>
+{% endblock %}

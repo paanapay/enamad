@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% set active = 'domains' %}
+{% block title %}{{ d.domain }}{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('domains') }}">‹ بازگشت به لیست</a></p>
+<h1>{{ d.domain }} <span class="stars" style="font-size:18px">{{ d.rating|stars }}</span></h1>
+
+<div class="panel">
+  <h2>اطلاعات کسب‌وکار</h2>
+  <div class="kv">
+    <div class="k">نام کسب‌وکار</div><div>{{ d.business_name or '—' }}</div>
+    <div class="k">مالک</div><div>{{ d.owner_name or '—' }}</div>
+    <div class="k">استان / شهر</div><div>{{ d.province or '—' }}{% if d.city %} — {{ d.city }}{% endif %}</div>
+    <div class="k">آدرس</div><div>{{ d.business_address or '—' }}</div>
+    <div class="k">تلفن</div><div class="mono">{{ d.phone or '—' }}</div>
+    <div class="k">ایمیل</div><div class="mono">{{ d.email or '—' }}</div>
+    <div class="k">ساعت کاری</div><div>{{ d.work_hours or '—' }}</div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>اطلاعات نماد</h2>
+  <div class="kv">
+    <div class="k">تاریخ صدور</div><div class="mono">{{ d.approve_date or '—' }}</div>
+    <div class="k">تاریخ انقضا</div><div class="mono">{{ d.expire_date or '—' }}</div>
+    <div class="k">شناسه نماد</div><div class="mono">{{ d.enamad_id or '—' }}</div>
+    <div class="k">کد</div><div class="mono">{{ d.code or '—' }}</div>
+    <div class="k">نماد اعتماد</div>
+    <div>{% if d.trustseal_url %}<a href="{{ d.trustseal_url }}" target="_blank" rel="noopener">مشاهده گواهی ↗</a>{% else %}—{% endif %}</div>
+    <div class="k">آخرین به‌روز</div><div class="mono">{{ d.updated_at or '—' }}</div>
+  </div>
+  <div style="margin-top:16px">
+    <a class="btn" href="{{ url_for('estelam', domain=d.domain) }}">استعلام زندهٔ مجدد از enamad.ir</a>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>خدمات و مجوزها ({{ services|length }})</h2>
+  {% if services %}
+  <table>
+    <thead><tr><th>#</th><th>عنوان خدمت</th><th>مرجع مجوز</th><th>وضعیت</th><th>اعتبار</th></tr></thead>
+    <tbody>
+      {% for s in services %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td>{{ s.service_title }}</td>
+        <td>{{ s.license_issuer or '—' }}</td>
+        <td>
+          {% if s.status and 'تایید' in s.status %}<span class="badge ok">{{ s.status }}</span>
+          {% else %}<span class="badge no">{{ s.status or '—' }}</span>{% endif %}
+        </td>
+        <td class="mono">{{ s.valid_from or '' }}{% if s.valid_to %} تا {{ s.valid_to }}{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">خدمتی برای این دامنه ثبت نشده. برای دریافت، استعلام زنده بگیرید.</div>
+  {% endif %}
+</div>
+{% endblock %}

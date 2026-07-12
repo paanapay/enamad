@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% set active = 'estelam' %}
+{% block title %}استعلام زنده{% endblock %}
+{% block body %}
+<h1>استعلام زندهٔ دامنه</h1>
+<p class="muted">دامنه را وارد کنید تا مستقیماً از enamad.ir استعلام گرفته شود.</p>
+
+<form class="searchbar" method="post" action="{{ url_for('estelam') }}">
+  <input type="text" name="domain" value="{{ domain }}" placeholder="مثال: digikala.com" autofocus dir="ltr">
+  <button class="btn" type="submit">استعلام</button>
+</form>
+
+{% if error %}<div class="flash error">{{ error }}</div>{% endif %}
+
+{% if local %}
+<div class="panel">
+  <h2>در دیتابیس محلی موجود است</h2>
+  <p><a href="{{ url_for('domain_detail', domain_id=local.id) }}">مشاهدهٔ رکورد ذخیره‌شده ({{ local.domain }}) ›</a></p>
+</div>
+{% endif %}
+
+{% if domain and result %}
+<div class="panel">
+  <h2>نتیجهٔ زنده از enamad.ir <span class="stars">{{ result.rating|stars }}</span></h2>
+  <div class="kv">
+    <div class="k">دامنه</div><div class="mono">{{ result.domain }}</div>
+    <div class="k">نام کسب‌وکار</div><div>{{ result.business_name or '—' }}</div>
+    <div class="k">مالک</div><div>{{ result.owner_name or '—' }}</div>
+    <div class="k">استان / شهر</div><div>{{ result.province or '—' }}{% if result.city %} — {{ result.city }}{% endif %}</div>
+    <div class="k">آدرس</div><div>{{ result.business_address or '—' }}</div>
+    <div class="k">تلفن</div><div class="mono">{{ result.phone or '—' }}</div>
+    <div class="k">ایمیل</div><div class="mono">{{ result.email or '—' }}</div>
+    <div class="k">تاریخ صدور</div><div class="mono">{{ result.approve_date or '—' }}</div>
+    <div class="k">تاریخ انقضا</div><div class="mono">{{ result.expire_date or '—' }}</div>
+    <div class="k">نماد اعتماد</div>
+    <div>{% if result.trustseal_url %}<a href="{{ result.trustseal_url }}" target="_blank" rel="noopener">مشاهده گواهی ↗</a>{% else %}—{% endif %}</div>
+  </div>
+
+  {% if result.services %}
+  <h2 style="margin-top:20px">خدمات و مجوزها</h2>
+  <table>
+    <thead><tr><th>#</th><th>عنوان خدمت</th><th>وضعیت</th></tr></thead>
+    <tbody>
+      {% for s in result.services %}
+      <tr><td>{{ loop.index }}</td><td>{{ s.service_title }}</td>
+        <td>{% if s.status and 'تایید' in s.status %}<span class="badge ok">{{ s.status }}</span>
+            {% else %}<span class="badge no">{{ s.status or '—' }}</span>{% endif %}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% elif domain and not result and not error %}
+<div class="panel"><div class="empty">نتیجه‌ای برای «{{ domain }}» در enamad.ir یافت نشد.</div></div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% set active = 'dashboard' %}
+{% block title %}داشبورد{% endblock %}
+{% block body %}
+<h1>داشبورد</h1>
+<div class="grid">
+  <div class="card stat"><div class="num">{{ stats.total|group }}</div><div class="lbl">کل دامنه‌ها</div></div>
+  <div class="card stat"><div class="num">{{ stats.rated|group }}</div><div class="lbl">دارای امتیاز</div></div>
+  <div class="card stat"><div class="num">{{ users.total|group }}</div><div class="lbl">کاربران ربات</div></div>
+  <div class="card stat"><div class="num">{{ users.interactions|group }}</div><div class="lbl">مجموع تعاملات</div></div>
+  <div class="card stat"><div class="num">{{ users.active_1d|group }}</div><div class="lbl">فعال ۲۴ ساعت</div></div>
+  <div class="card stat"><div class="num">{{ users.active_7d|group }}</div><div class="lbl">فعال ۷ روز</div></div>
+</div>
+
+<div class="panel" style="margin-top:20px">
+  <h2>وضعیت جمع‌آوری داده</h2>
+  <div class="kv">
+    <div class="k">آخرین به‌روزرسانی دیتابیس</div><div>{{ stats.last_update or '—' }}</div>
+    <div class="k">صفحات پوشش‌داده‌شده</div><div>{{ stats.scrape.distinct_pages_in_db|group }} صفحه</div>
+    <div class="k">آخرین صفحهٔ مؤثر</div><div>{{ stats.scrape.effective_last_page|group }}</div>
+    {% if stats.last_run %}
+    <div class="k">آخرین اجرای اسکرپ</div>
+    <div>{{ stats.last_run.status }} — {{ stats.last_run.records_saved|group }} رکورد
+      ({{ stats.last_run.finished_at or stats.last_run.started_at }})</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="panel">
+  <h2>دسترسی سریع</h2>
+  <div class="tabs">
+    <a href="{{ url_for('domains') }}">مرور لیست دامنه‌ها</a>
+    <a href="{{ url_for('estelam') }}">استعلام یک دامنه</a>
+    <a href="{{ url_for('domains', sort='top') }}">برترین‌ها</a>
+    <a href="{{ url_for('users') }}">کاربران ربات</a>
+  </div>
+</div>
+{% endblock %}
