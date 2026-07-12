@@ -15,6 +15,9 @@
 {% if local %}
 <div class="panel">
   <h2>در دیتابیس محلی موجود است</h2>
+  {% if local.enamad_status == 'not_found' %}
+  <p><span class="badge no">یافت نشد در اینماد</span> — در استعلام زنده enamad.ir پیدا نشد.</p>
+  {% endif %}
   <p><a href="{{ url_for('domain_detail', domain_id=local.id) }}">مشاهدهٔ رکورد ذخیره‌شده ({{ local.domain }}) ›</a></p>
 </div>
 {% endif %}

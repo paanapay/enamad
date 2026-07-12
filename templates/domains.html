@@ -38,7 +38,7 @@
 <div class="panel" style="padding:0;overflow:auto">
   <table>
     <thead>
-      <tr><th>دامنه</th><th>کسب‌وکار</th><th>تلفن</th><th>نوع</th><th>استان / شهر</th><th>امتیاز</th><th></th></tr>
+      <tr><th>دامنه</th><th>کسب‌وکار</th><th>تلفن</th><th>نوع</th><th>وضعیت اینماد</th><th>استان / شهر</th><th>امتیاز</th><th></th></tr>
     </thead>
     <tbody>
       {% for d in rows %}
@@ -47,12 +47,19 @@
         <td>{{ d.business_name or '—' }}<div class="muted" style="font-size:12px">{{ d.owner_name or '' }}</div></td>
         <td class="mono">{{ d.phone or '—' }}</td>
         <td><span class="badge {{ 'ok' if d.phone_type in ('mobile','mixed') else 'no' }}">{{ d.phone_type|phone_label }}</span></td>
+        <td>
+          {% if d.enamad_status == 'not_found' %}
+          <span class="badge no" title="در استعلام زنده enamad.ir یافت نشد">یافت نشد</span>
+          {% else %}
+          —
+          {% endif %}
+        </td>
         <td>{{ d.province or '—' }}{% if d.city %} — {{ d.city }}{% endif %}</td>
         <td class="stars">{{ d.rating|stars }}</td>
         <td><a href="{{ url_for('domain_detail', domain_id=d.id) }}">جزئیات ›</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="empty">موردی یافت نشد.</td></tr>
+      <tr><td colspan="8" class="empty">موردی یافت نشد.</td></tr>
       {% endfor %}
     </tbody>
   </table>

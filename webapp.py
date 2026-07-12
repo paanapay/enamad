@@ -121,6 +121,14 @@ def phone_label_filter(value):
     return labels.get(value or "", value or "—")
 
 
+@app.template_filter("enamad_status_label")
+def enamad_status_label_filter(value):
+    labels = {
+        "not_found": "یافت نشد در اینماد",
+    }
+    return labels.get(value or "", "")
+
+
 @app.template_filter("call_outcome")
 def call_outcome_filter(value):
     return CALL_OUTCOMES.get(value or "", value or "—")
@@ -267,6 +275,8 @@ def domain_detail(domain_id: int):
 @app.route("/estelam", methods=["GET", "POST"])
 @login_required
 def estelam():
+    from db import set_domain_enamad_status
+
     domain = (request.form.get("domain") or request.args.get("domain") or "").strip()
     result = None
     error = None
@@ -281,6 +291,14 @@ def estelam():
                 error = f"استعلام زنده ناموفق بود: {exc}"
         else:
             error = "استعلام زنده غیرفعال است (WEB_LIVE_SEARCH=no)."
+        if local:
+            with mysql_connection(app_config().mysql) as conn:
+                if result:
+                    set_domain_enamad_status(conn, local["id"], None)
+                elif not error:
+                    set_domain_enamad_status(conn, local["id"], "not_found")
+                conn.commit()
+                local = q.get_domain_exact(conn, _clean_domain(domain))
     return render_template(
         "estelam.html", domain=domain, result=result, local=local, error=error
     )

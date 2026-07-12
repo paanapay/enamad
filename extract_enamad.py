@@ -1847,6 +1847,11 @@ def parse_args() -> argparse.Namespace:
         help="With --refresh-stale: only refresh domains missing address/phone/email",
     )
     parser.add_argument(
+        "--newest-first",
+        action="store_true",
+        help="With --refresh-stale: start from newest registered domains (id DESC)",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
         help="Fetch all pages until the end of the list",
@@ -2029,6 +2034,7 @@ def main() -> int:
                 delay=delay,
                 progress=True,
                 missing_only=args.missing_only,
+                newest_first=args.newest_first,
             )
         else:
             delay = args.delay if args.delay is not None else 0.3
@@ -2040,6 +2046,7 @@ def main() -> int:
                     delay=delay,
                     progress=True,
                     missing_only=args.missing_only,
+                    newest_first=args.newest_first,
                 )
                 commit_connection(conn)
         if args.missing_only:

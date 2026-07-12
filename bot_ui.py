@@ -314,10 +314,14 @@ def domain_card(row: dict, *, compact: bool = False) -> str:
     city = esc(row.get("city") or "—")
 
     if compact:
+        status = ""
+        if row.get("enamad_status") == "not_found":
+            status = "\n⚠️ " + f.italic("یافت نشد در اینماد")
         return (
             f"🌐 {f.code(domain)}\n"
             f"🏪 {name}\n"
             f"{stars(rating)}  📍 {province} / {city}"
+            f"{status}"
         )
 
     lines = [
@@ -326,6 +330,8 @@ def domain_card(row: dict, *, compact: bool = False) -> str:
         f"{stars(rating)} ({rating}/5)",
         f"📍 {province} — {city}",
     ]
+    if row.get("enamad_status") == "not_found":
+        lines.insert(1, "⚠️ " + f.italic("در استعلام زنده enamad.ir یافت نشد (حذف/منقضی)"))
     if row.get("owner_name"):
         lines.append(f"👤 {esc(row['owner_name'])}")
     if row.get("business_address"):

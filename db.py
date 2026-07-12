@@ -58,12 +58,103 @@ def normalize_domain(domain: str) -> str:
     return value.split("/")[0].split("?")[0].split("#")[0].strip()
 
 
+def _merge_search_metadata(row: dict, fresh: dict) -> dict:
+    """Apply live search fields (fresh enamad_id/code) onto an existing DB row."""
+    merged = dict(row)
+    for key in (
+        "enamad_id",
+        "code",
+        "domain",
+        "business_name",
+        "province",
+        "city",
+        "rating",
+        "approve_date",
+        "expire_date",
+        "trustseal_url",
+    ):
+        value = fresh.get(key)
+        if value not in (None, ""):
+            merged[key] = value
+    return merged
+
+
+def update_domain_by_id(conn, domain_id: int, row: dict, *, old_enamad_id: str, old_code: str) -> None:
+    """Update one domain row in place (avoids duplicate inserts when id/code rotate)."""
+    from crm_db import enrich_contact_fields
+
+    enriched = enrich_contact_fields(row)
+    new_enamad_id = str(enriched.get("enamad_id") or "")
+    new_code = str(enriched.get("code") or "")
+    if not new_enamad_id or not new_code:
+        raise ValueError("enamad_id and code are required to update a domain")
+
+    with conn.cursor() as cursor:
+        if (old_enamad_id, old_code) != (new_enamad_id, new_code):
+            cursor.execute(
+                "DELETE FROM enamad_domain_services WHERE enamad_id = %s AND code = %s",
+                (old_enamad_id, old_code),
+            )
+        cursor.execute(
+            """
+            UPDATE enamad_domains SET
+                enamad_id = %s,
+                code = %s,
+                domain = %s,
+                business_name = %s,
+                owner_name = %s,
+                business_address = %s,
+                phone = %s,
+                email = %s,
+                work_hours = %s,
+                province = %s,
+                city = %s,
+                rating = %s,
+                approve_date = %s,
+                expire_date = %s,
+                trustseal_url = %s,
+                phone_type = %s,
+                mobile_phone = %s,
+                email_normalized = %s,
+                enamad_status = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """,
+            (
+                new_enamad_id,
+                new_code,
+                normalize_domain(str(enriched.get("domain") or "")),
+                enriched.get("business_name") or enriched.get("persian_name") or None,
+                enriched.get("owner_name") or None,
+                enriched.get("business_address") or None,
+                enriched.get("phone") or None,
+                enriched.get("email") or None,
+                enriched.get("work_hours") or None,
+                enriched.get("province") or None,
+                enriched.get("city") or None,
+                int(enriched.get("rating") or 0),
+                enriched.get("approve_date") or None,
+                enriched.get("expire_date") or None,
+                enriched.get("trustseal_url") or None,
+                enriched.get("phone_type"),
+                enriched.get("mobile_phone"),
+                enriched.get("email_normalized"),
+                domain_id,
+            ),
+        )
+
+    save_domain_services(conn, [enriched])
+
+
 def refresh_domain_trustseal(conn, domain_id: int, client=None) -> tuple[dict, list[dict]] | None:
     """Fetch trust seal page and refresh contact info + all services in DB.
 
+    Resolves a fresh enamad_id/code via live search (same path as estelam/bot)
+    because stored trust-seal tokens expire and stale codes time out.
+
     Pass a reused `client` (EnamadClient) to enable HTTP keep-alive across calls.
     """
-    from extract_enamad import EnamadClient, TRUSTSEAL_LABELS
+    from extract_enamad import EnamadClient, TRUSTSEAL_LABELS, normalize_search_row
 
     with conn.cursor() as cursor:
         cursor.execute(
@@ -78,13 +169,27 @@ def refresh_domain_trustseal(conn, domain_id: int, client=None) -> tuple[dict, l
             (domain_id,),
         )
         row = cursor.fetchone()
-    if not row or not row.get("enamad_id") or not row.get("code"):
+    if not row or not row.get("domain"):
         return None
 
+    old_enamad_id = str(row.get("enamad_id") or "")
+    old_code = str(row.get("code") or "")
+
     if client is None:
-        client = EnamadClient()
-    details = client.fetch_trustseal_details(row["enamad_id"], row["code"])
-    enriched = dict(row)
+        client = EnamadClient(quiet=True, timeout=25, retries=1)
+
+    search_data = client.search_domain(str(row["domain"]))
+    if not search_data:
+        set_domain_enamad_status(conn, domain_id, "not_found")
+        return None
+
+    enriched = _merge_search_metadata(row, normalize_search_row(search_data, str(row["domain"])))
+
+    try:
+        details = client.fetch_trustseal_details(enriched["enamad_id"], enriched["code"])
+    except Exception:
+        return None
+
     for field in TRUSTSEAL_LABELS.values():
         value = details.get(field, "")
         if value:
@@ -93,7 +198,13 @@ def refresh_domain_trustseal(conn, domain_id: int, client=None) -> tuple[dict, l
         enriched["business_name"] = details["shop_name"]
     enriched["services"] = details.get("services") or []
 
-    save_domains(conn, [enriched])
+    update_domain_by_id(
+        conn,
+        domain_id,
+        enriched,
+        old_enamad_id=old_enamad_id,
+        old_code=old_code,
+    )
     services = [
         {
             "service_title": item.get("service_title"),
@@ -290,13 +401,17 @@ def refresh_stale_domains(
     progress: bool = False,
     commit_every: int = 100,
     missing_only: bool = False,
+    newest_first: bool = False,
 ) -> tuple[int, int, int]:
     """Refresh domains not updated in the last `days` days (no captcha needed).
 
-    Returns (candidates, ok, failed). Oldest `updated_at` is refreshed first.
+    Returns (candidates, ok, failed). By default oldest `updated_at` is refreshed first.
     With `missing_only`, only rows lacking address/phone/email are picked.
+    With `newest_first`, newest DB rows (highest id) are picked first.
     """
-    rows = _select_stale_ids(conn, days, limit, missing_only=missing_only)
+    rows = _select_stale_ids(
+        conn, days, limit, missing_only=missing_only, newest_first=newest_first
+    )
 
     ok = 0
     failed = 0
@@ -343,18 +458,20 @@ def refresh_stale_domains(
 
 
 def _select_stale_ids(
-    conn, days: int, limit: int, *, missing_only: bool = False
+    conn, days: int, limit: int, *, missing_only: bool = False, newest_first: bool = False
 ) -> list[dict]:
     """Pick domains to refresh.
 
     - Normal: those not updated in the last `days` days (oldest first).
     - missing_only: only rows lacking contact details (address/phone/email),
       regardless of `updated_at`.
+    - newest_first: order by id DESC (newest registered domains first).
     """
     if missing_only:
         where = (
             "enamad_id IS NOT NULL AND enamad_id != '' "
             "AND code IS NOT NULL AND code != '' "
+            "AND (enamad_status IS NULL OR enamad_status != 'not_found') "
             "AND ("
             "  business_address IS NULL OR business_address = '' "
             "  OR phone IS NULL OR phone = '' "
@@ -370,13 +487,15 @@ def _select_stale_ids(
         )
         params = (days, limit)
 
+    order = "id DESC" if newest_first else "updated_at ASC"
+
     with conn.cursor() as cursor:
         cursor.execute(
             f"""
             SELECT id, domain
             FROM enamad_domains
             WHERE {where}
-            ORDER BY updated_at ASC
+            ORDER BY {order}
             LIMIT %s
             """,
             params,
@@ -394,6 +513,7 @@ def refresh_stale_domains_parallel(
     progress: bool = False,
     commit_every: int = 50,
     missing_only: bool = False,
+    newest_first: bool = False,
 ) -> tuple[int, int, int]:
     """Parallel version of refresh_stale_domains using threads.
 
@@ -413,7 +533,9 @@ def refresh_stale_domains_parallel(
         return result.done, result.not_done
 
     with mysql_connection(cfg) as conn:
-        rows = _select_stale_ids(conn, days, limit, missing_only=missing_only)
+        rows = _select_stale_ids(
+            conn, days, limit, missing_only=missing_only, newest_first=newest_first
+        )
 
     total = len(rows)
     if total == 0:
@@ -664,7 +786,16 @@ DOMAIN_DETAIL_COLUMNS = {
     "phone": "VARCHAR(64) NULL",
     "email": "VARCHAR(255) NULL",
     "work_hours": "VARCHAR(128) NULL",
+    "enamad_status": "VARCHAR(16) NULL",
 }
+
+
+def set_domain_enamad_status(conn, domain_id: int, status: str | None) -> None:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "UPDATE enamad_domains SET enamad_status = %s WHERE id = %s",
+            (status, domain_id),
+        )
 
 
 def ensure_domain_detail_columns(conn) -> None:

@@ -5,6 +5,13 @@
 <p><a href="{{ url_for('domains') }}">‹ بازگشت به لیست</a></p>
 <h1>{{ d.domain }} <span class="stars" style="font-size:18px">{{ d.rating|stars }}</span></h1>
 
+{% if d.enamad_status == 'not_found' %}
+<div class="panel" style="border-color:#c44;background:#fff8f8">
+  <strong>⚠️ این دامنه در استعلام زنده enamad.ir یافت نشد.</strong>
+  <p class="muted" style="margin:8px 0 0">احتمالاً از اینماد حذف یا منقضی شده. اطلاعات زیر از آخرین رکورد ذخیره‌شده در دیتابیس است.</p>
+</div>
+{% endif %}
+
 <div class="panel">
   <h2>اطلاعات کسب‌وکار</h2>
   <div class="kv">

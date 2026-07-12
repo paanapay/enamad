@@ -7,8 +7,10 @@ DOMAIN_FIELDS = """
     business_address, phone, email, work_hours,
     province, city, rating, approve_date, expire_date,
     trustseal_url, phone_type, mobile_phone, email_normalized,
-    updated_at, created_at
+    enamad_status, updated_at, created_at
 """
+
+ENAMAD_STATUS_NOT_FOUND = "not_found"
 
 
 def get_stats(conn) -> dict[str, Any]:

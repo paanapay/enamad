@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS enamad_domains (
   approve_date VARCHAR(32) NULL,
   expire_date VARCHAR(32) NULL,
   trustseal_url VARCHAR(512) NULL,
+  enamad_status VARCHAR(16) NULL,
   source_page INT UNSIGNED NULL,
   source_row INT UNSIGNED NULL,
   scrape_run_id BIGINT UNSIGNED NULL,
