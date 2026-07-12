@@ -53,6 +53,8 @@ from crm_db import (
     save_template,
     update_admin,
     count_message_logs,
+    message_log_stats,
+    iter_message_logs_for_export,
     call_stats,
 )
 from crm_service import run_campaign
@@ -391,6 +393,154 @@ def campaign_detail(campaign_id: int):
         page=page,
         pages=pages,
         total_logs=total_logs,
+    )
+
+
+_LOG_CHANNELS = {"sms": "پیامک", "email": "ایمیل"}
+_LOG_STATUSES = {
+    "sent": "ارسال موفق",
+    "failed": "ناموفق",
+    "skipped": "رد شده",
+    "pending": "در انتظار",
+}
+
+
+def _log_filter_args():
+    channel = request.args.get("channel", "").strip()
+    status = request.args.get("status", "").strip()
+    date_from = request.args.get("from", "").strip()
+    date_to = request.args.get("to", "").strip()
+    search = (request.args.get("q") or "").strip()
+    if channel not in _LOG_CHANNELS:
+        channel = ""
+    if status not in _LOG_STATUSES:
+        status = ""
+    return channel, status, date_from, date_to, search
+
+
+@crm_bp.route("/logs")
+@login_required
+def message_logs():
+    channel, status, date_from, date_to, search = _log_filter_args()
+    try:
+        page = max(0, int(request.args.get("page", 0)))
+    except ValueError:
+        page = 0
+    page_size = 50
+    with mysql_connection(_config().mysql) as conn:
+        stats = message_log_stats(
+            conn,
+            channel=channel,
+            status=status,
+            date_from=date_from,
+            date_to=date_to,
+            search=search,
+        )
+        total = count_message_logs(
+            conn,
+            channel=channel,
+            status=status,
+            date_from=date_from,
+            date_to=date_to,
+            search=search,
+        )
+        logs = list_message_logs(
+            conn,
+            channel=channel,
+            status=status,
+            date_from=date_from,
+            date_to=date_to,
+            search=search,
+            limit=page_size,
+            offset=page * page_size,
+        )
+    pages = (total + page_size - 1) // page_size if total else 1
+    return render_template(
+        "crm/logs.html",
+        logs=logs,
+        stats=stats,
+        channels=_LOG_CHANNELS,
+        statuses=_LOG_STATUSES,
+        channel=channel,
+        status=status,
+        date_from=date_from,
+        date_to=date_to,
+        query=search,
+        page=page,
+        pages=pages,
+        total=total,
+        page_size=page_size,
+    )
+
+
+@crm_bp.route("/logs/export.csv")
+@login_required
+def message_logs_export():
+    from flask import Response
+
+    channel, status, date_from, date_to, search = _log_filter_args()
+
+    def generate():
+        import csv
+        import io
+
+        header = [
+            "id",
+            "زمان",
+            "کانال",
+            "وضعیت",
+            "گیرنده",
+            "نوع گیرنده",
+            "دامنه",
+            "کسب‌وکار",
+            "کمپین",
+            "قالب",
+            "شناسه پیام",
+            "خطا",
+        ]
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(header)
+        yield "\ufeff" + buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+
+        from jalali_utils import format_jdatetime
+
+        with mysql_connection(_config().mysql) as conn:
+            for row in iter_message_logs_for_export(
+                conn,
+                channel=channel,
+                status=status,
+                date_from=date_from,
+                date_to=date_to,
+                search=search,
+            ):
+                writer.writerow(
+                    [
+                        row.get("id"),
+                        format_jdatetime(row.get("sent_at") or row.get("created_at")),
+                        _LOG_CHANNELS.get(row.get("channel"), row.get("channel") or ""),
+                        _LOG_STATUSES.get(row.get("status"), row.get("status") or ""),
+                        row.get("recipient") or "",
+                        row.get("recipient_type") or "",
+                        row.get("domain") or "",
+                        row.get("business_name") or "",
+                        row.get("campaign_name") or "",
+                        row.get("template_name") or "",
+                        row.get("provider_message_id") or "",
+                        row.get("error_message") or "",
+                    ]
+                )
+                yield buffer.getvalue()
+                buffer.seek(0)
+                buffer.truncate(0)
+
+    filename = "message_logs.csv"
+    return Response(
+        generate(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
 

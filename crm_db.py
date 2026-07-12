@@ -690,38 +690,179 @@ def insert_message_log(conn, data: dict) -> int:
         return int(cursor.lastrowid)
 
 
+def _message_log_filters(
+    *,
+    campaign_id: int | None = None,
+    channel: str = "",
+    status: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    search: str = "",
+) -> tuple[str, list[Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if campaign_id:
+        clauses.append("l.campaign_id = %s")
+        params.append(campaign_id)
+    if channel:
+        clauses.append("l.channel = %s")
+        params.append(channel)
+    if status:
+        clauses.append("l.status = %s")
+        params.append(status)
+    if date_from:
+        clauses.append("COALESCE(l.sent_at, l.created_at) >= %s")
+        params.append(f"{date_from} 00:00:00")
+    if date_to:
+        clauses.append("COALESCE(l.sent_at, l.created_at) <= %s")
+        params.append(f"{date_to} 23:59:59")
+    if search:
+        pattern = f"%{search}%"
+        clauses.append(
+            "(d.domain LIKE %s OR d.business_name LIKE %s OR l.recipient LIKE %s)"
+        )
+        params.extend([pattern, pattern, pattern])
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return where, params
+
+
 def list_message_logs(
     conn,
     *,
     campaign_id: int | None = None,
+    channel: str = "",
+    status: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    search: str = "",
     limit: int = 100,
     offset: int = 0,
 ) -> list[dict]:
-    sql = """
-        SELECT l.*, d.domain, d.business_name
+    where, params = _message_log_filters(
+        campaign_id=campaign_id,
+        channel=channel,
+        status=status,
+        date_from=date_from,
+        date_to=date_to,
+        search=search,
+    )
+    sql = f"""
+        SELECT l.*, d.domain, d.business_name,
+               c.name AS campaign_name,
+               t.name AS template_name
         FROM message_logs l
         LEFT JOIN enamad_domains d ON d.id = l.domain_id
+        LEFT JOIN message_campaigns c ON c.id = l.campaign_id
+        LEFT JOIN message_templates t ON t.id = l.template_id
+        {where}
+        ORDER BY l.id DESC
+        LIMIT %s OFFSET %s
     """
-    params: list[Any] = []
-    if campaign_id:
-        sql += " WHERE l.campaign_id = %s"
-        params.append(campaign_id)
-    sql += " ORDER BY l.id DESC LIMIT %s OFFSET %s"
-    params.extend([limit, offset])
     with conn.cursor() as cursor:
-        cursor.execute(sql, params)
+        cursor.execute(sql, [*params, limit, offset])
         return list(cursor.fetchall())
 
 
-def count_message_logs(conn, *, campaign_id: int | None = None) -> int:
-    sql = "SELECT COUNT(*) AS c FROM message_logs"
-    params: list[Any] = []
-    if campaign_id:
-        sql += " WHERE campaign_id = %s"
-        params.append(campaign_id)
+def count_message_logs(
+    conn,
+    *,
+    campaign_id: int | None = None,
+    channel: str = "",
+    status: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    search: str = "",
+) -> int:
+    where, params = _message_log_filters(
+        campaign_id=campaign_id,
+        channel=channel,
+        status=status,
+        date_from=date_from,
+        date_to=date_to,
+        search=search,
+    )
+    sql = f"""
+        SELECT COUNT(*) AS c
+        FROM message_logs l
+        LEFT JOIN enamad_domains d ON d.id = l.domain_id
+        {where}
+    """
     with conn.cursor() as cursor:
         cursor.execute(sql, params)
         return int((cursor.fetchone() or {}).get("c") or 0)
+
+
+def message_log_stats(
+    conn,
+    *,
+    channel: str = "",
+    status: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    search: str = "",
+) -> dict[str, Any]:
+    """Aggregate message-log counts grouped by channel and status."""
+    where, params = _message_log_filters(
+        channel=channel,
+        status=status,
+        date_from=date_from,
+        date_to=date_to,
+        search=search,
+    )
+    sql = f"""
+        SELECT l.channel, l.status, COUNT(*) AS c
+        FROM message_logs l
+        LEFT JOIN enamad_domains d ON d.id = l.domain_id
+        {where}
+        GROUP BY l.channel, l.status
+    """
+    stats = {
+        "total": 0,
+        "sms": {"total": 0, "sent": 0, "failed": 0, "skipped": 0, "pending": 0},
+        "email": {"total": 0, "sent": 0, "failed": 0, "skipped": 0, "pending": 0},
+    }
+    with conn.cursor() as cursor:
+        cursor.execute(sql, params)
+        for row in cursor.fetchall():
+            ch = row["channel"] if row["channel"] in stats else None
+            st = row["status"] or "pending"
+            count = int(row["c"] or 0)
+            stats["total"] += count
+            if ch:
+                stats[ch]["total"] += count
+                stats[ch][st] = stats[ch].get(st, 0) + count
+    return stats
+
+
+def iter_message_logs_for_export(
+    conn,
+    *,
+    channel: str = "",
+    status: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    search: str = "",
+    batch: int = 1000,
+):
+    """Yield message-log rows for CSV export in batches (streaming-friendly)."""
+    offset = 0
+    while True:
+        rows = list_message_logs(
+            conn,
+            channel=channel,
+            status=status,
+            date_from=date_from,
+            date_to=date_to,
+            search=search,
+            limit=batch,
+            offset=offset,
+        )
+        if not rows:
+            break
+        yield from rows
+        if len(rows) < batch:
+            break
+        offset += batch
 
 
 _DOMAIN_OUTREACH_FIELDS = """

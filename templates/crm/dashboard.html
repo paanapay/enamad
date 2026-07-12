@@ -40,6 +40,10 @@
     <h2>📋 کمپین‌ها</h2>
     <p class="muted">تاریخچه ارسال‌ها</p>
   </a>
+  <a class="card" href="{{ url_for('crm.message_logs') }}" style="text-decoration:none;color:inherit">
+    <h2>📊 گزارش ارسال‌ها</h2>
+    <p class="muted">لاگ پیامک و ایمیل + خروجی CSV</p>
+  </a>
 </div>
 
 {% if campaigns %}

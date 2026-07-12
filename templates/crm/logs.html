@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% set active = 'crm' %}
+{% block title %}گزارش ارسال‌ها{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('crm.dashboard') }}">‹ بازگشت به CRM</a></p>
+<h1>گزارش پیامک و ایمیل</h1>
+
+<div class="grid" style="margin-bottom:18px">
+  <div class="card stat"><div class="num">{{ stats.total|group }}</div><div class="lbl">کل ارسال‌ها</div></div>
+  <div class="card stat">
+    <div class="num">{{ stats.sms.sent|group }}</div>
+    <div class="lbl">پیامک موفق</div>
+    <div class="muted" style="font-size:12px;margin-top:4px">
+      ناموفق {{ stats.sms.failed|group }} · رد {{ stats.sms.skipped|group }}
+    </div>
+  </div>
+  <div class="card stat">
+    <div class="num">{{ stats.email.sent|group }}</div>
+    <div class="lbl">ایمیل موفق</div>
+    <div class="muted" style="font-size:12px;margin-top:4px">
+      ناموفق {{ stats.email.failed|group }} · رد {{ stats.email.skipped|group }}
+    </div>
+  </div>
+  <div class="card stat">
+    <div class="num">{{ (stats.sms.total + stats.email.total)|group }}</div>
+    <div class="lbl">مجموع پیامک + ایمیل</div>
+    <div class="muted" style="font-size:12px;margin-top:4px">
+      پیامک {{ stats.sms.total|group }} · ایمیل {{ stats.email.total|group }}
+    </div>
+  </div>
+</div>
+
+<form class="searchbar" method="get" action="{{ url_for('crm.message_logs') }}">
+  <input type="search" name="q" value="{{ query }}" placeholder="جستجو: دامنه، کسب‌وکار یا گیرنده…">
+  <select name="channel">
+    <option value="">همه کانال‌ها</option>
+    {% for key, label in channels.items() %}
+    <option value="{{ key }}" {{ 'selected' if channel==key }}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <select name="status">
+    <option value="">همه وضعیت‌ها</option>
+    {% for key, label in statuses.items() %}
+    <option value="{{ key }}" {{ 'selected' if status==key }}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <input type="text" name="from" value="{{ date_from }}" placeholder="از تاریخ (YYYY-MM-DD)" dir="ltr" style="min-width:150px">
+  <input type="text" name="to" value="{{ date_to }}" placeholder="تا تاریخ (YYYY-MM-DD)" dir="ltr" style="min-width:150px">
+  <button class="btn" type="submit">فیلتر</button>
+  {% if channel or status or date_from or date_to or query %}
+  <a class="btn ghost" href="{{ url_for('crm.message_logs') }}">حذف فیلتر</a>
+  {% endif %}
+  <a class="btn ghost" href="{{ url_for('crm.message_logs_export', channel=channel, status=status, from=date_from, to=date_to, q=query) }}">خروجی CSV</a>
+</form>
+<p class="hint muted" style="margin:-6px 0 14px">تاریخ‌ها میلادی وارد شوند (مثال: 2026-07-12).</p>
+
+<div class="panel" style="padding:0;overflow:auto">
+  <table>
+    <thead>
+      <tr>
+        <th>زمان</th>
+        <th>کانال</th>
+        <th>وضعیت</th>
+        <th>گیرنده</th>
+        <th>دامنه / کسب‌وکار</th>
+        <th>کمپین</th>
+        <th>قالب</th>
+        <th>جزئیات</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for l in logs %}
+      <tr>
+        <td class="mono">{{ (l.sent_at or l.created_at)|jdatetime }}</td>
+        <td>{{ channels.get(l.channel, l.channel) }}</td>
+        <td>
+          <span class="badge {{ 'ok' if l.status=='sent' else ('no' if l.status=='failed' else 'muted') }}">
+            {{ statuses.get(l.status, l.status) }}
+          </span>
+        </td>
+        <td class="mono">{{ l.recipient or '—' }}</td>
+        <td>
+          {% if l.domain %}
+          <a href="{{ url_for('domain_detail', domain_id=l.domain_id) }}">{{ l.domain }}</a>
+          {% else %}—{% endif %}
+          <div class="muted" style="font-size:12px">{{ l.business_name or '' }}</div>
+        </td>
+        <td>
+          {% if l.campaign_id %}
+          <a href="{{ url_for('crm.campaign_detail', campaign_id=l.campaign_id) }}">{{ l.campaign_name or l.campaign_id }}</a>
+          {% elif l.automation_rule_id %}
+          <span class="tag">خودکار</span>
+          {% else %}—{% endif %}
+        </td>
+        <td>{{ l.template_name or '—' }}</td>
+        <td>
+          {% if l.error_message %}
+          <span class="muted" style="font-size:12px" title="{{ l.error_message }}">{{ l.error_message[:40] }}{{ '…' if l.error_message|length > 40 }}</span>
+          {% elif l.provider_message_id %}
+          <span class="mono muted" style="font-size:12px">#{{ l.provider_message_id }}</span>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="empty">لاگی با این فیلترها یافت نشد.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if pages > 1 %}
+<div class="pager">
+  {% if page > 0 %}
+    <a href="{{ url_for('crm.message_logs', channel=channel, status=status, from=date_from, to=date_to, q=query, page=page-1) }}">‹ قبلی</a>
+  {% else %}<span class="disabled">‹ قبلی</span>{% endif %}
+  <span>صفحه {{ (page+1)|group }} از {{ pages|group }} ({{ total|group }} رکورد)</span>
+  {% if page + 1 < pages %}
+    <a href="{{ url_for('crm.message_logs', channel=channel, status=status, from=date_from, to=date_to, q=query, page=page+1) }}">بعدی ›</a>
+  {% else %}<span class="disabled">بعدی ›</span>{% endif %}
+</div>
+{% endif %}
+{% endblock %}
