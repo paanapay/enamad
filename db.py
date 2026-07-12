@@ -79,9 +79,29 @@ def _merge_search_metadata(row: dict, fresh: dict) -> dict:
     return merged
 
 
-def update_domain_by_id(conn, domain_id: int, row: dict, *, old_enamad_id: str, old_code: str) -> None:
+def _prefer_new_value(new_val, old_val):
+    """Keep existing DB value when an update source has no data for a field."""
+    if new_val not in (None, ""):
+        return new_val
+    return old_val
+
+
+def update_domain_by_id(conn, domain_id: int, row: dict, *, old_enamad_id: str, old_code: str, existing: dict | None = None) -> None:
     """Update one domain row in place (avoids duplicate inserts when id/code rotate)."""
     from crm_db import enrich_contact_fields
+
+    if existing is None:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT business_name, owner_name, business_address, phone, email, work_hours,
+                       province, city, rating, approve_date, expire_date, trustseal_url,
+                       phone_type, mobile_phone, email_normalized
+                FROM enamad_domains WHERE id = %s
+                """,
+                (domain_id,),
+            )
+            existing = cursor.fetchone() or {}
 
     enriched = enrich_contact_fields(row)
     new_enamad_id = str(enriched.get("enamad_id") or "")
@@ -124,21 +144,30 @@ def update_domain_by_id(conn, domain_id: int, row: dict, *, old_enamad_id: str, 
                 new_enamad_id,
                 new_code,
                 normalize_domain(str(enriched.get("domain") or "")),
-                enriched.get("business_name") or enriched.get("persian_name") or None,
-                enriched.get("owner_name") or None,
-                enriched.get("business_address") or None,
-                enriched.get("phone") or None,
-                enriched.get("email") or None,
-                enriched.get("work_hours") or None,
-                enriched.get("province") or None,
-                enriched.get("city") or None,
-                int(enriched.get("rating") or 0),
-                enriched.get("approve_date") or None,
-                enriched.get("expire_date") or None,
-                enriched.get("trustseal_url") or None,
-                enriched.get("phone_type"),
-                enriched.get("mobile_phone"),
-                enriched.get("email_normalized"),
+                _prefer_new_value(
+                    enriched.get("business_name") or enriched.get("persian_name"),
+                    existing.get("business_name"),
+                ),
+                _prefer_new_value(enriched.get("owner_name"), existing.get("owner_name")),
+                _prefer_new_value(enriched.get("business_address"), existing.get("business_address")),
+                _prefer_new_value(enriched.get("phone"), existing.get("phone")),
+                _prefer_new_value(enriched.get("email"), existing.get("email")),
+                _prefer_new_value(enriched.get("work_hours"), existing.get("work_hours")),
+                _prefer_new_value(enriched.get("province"), existing.get("province")),
+                _prefer_new_value(enriched.get("city"), existing.get("city")),
+                int(enriched.get("rating") or existing.get("rating") or 0),
+                _prefer_new_value(enriched.get("approve_date"), existing.get("approve_date")),
+                _prefer_new_value(enriched.get("expire_date"), existing.get("expire_date")),
+                _prefer_new_value(enriched.get("trustseal_url"), existing.get("trustseal_url")),
+                enriched.get("phone_type")
+                if enriched.get("phone")
+                else existing.get("phone_type"),
+                enriched.get("mobile_phone")
+                if enriched.get("phone")
+                else existing.get("mobile_phone"),
+                enriched.get("email_normalized")
+                if enriched.get("email")
+                else existing.get("email_normalized"),
                 domain_id,
             ),
         )
@@ -204,6 +233,7 @@ def refresh_domain_trustseal(conn, domain_id: int, client=None) -> tuple[dict, l
         enriched,
         old_enamad_id=old_enamad_id,
         old_code=old_code,
+        existing=row,
     )
     services = [
         {
@@ -997,23 +1027,35 @@ def save_domains(conn, rows: list[dict], scrape_run_id: int | None = None) -> in
         )
         ON DUPLICATE KEY UPDATE
             domain = VALUES(domain),
-            business_name = VALUES(business_name),
-            owner_name = VALUES(owner_name),
-            business_address = VALUES(business_address),
-            phone = VALUES(phone),
-            email = VALUES(email),
-            work_hours = VALUES(work_hours),
-            province = VALUES(province),
-            city = VALUES(city),
+            business_name = COALESCE(NULLIF(VALUES(business_name), ''), business_name),
+            owner_name = COALESCE(NULLIF(VALUES(owner_name), ''), owner_name),
+            business_address = COALESCE(NULLIF(VALUES(business_address), ''), business_address),
+            phone = COALESCE(NULLIF(VALUES(phone), ''), phone),
+            email = COALESCE(NULLIF(VALUES(email), ''), email),
+            work_hours = COALESCE(NULLIF(VALUES(work_hours), ''), work_hours),
+            province = COALESCE(NULLIF(VALUES(province), ''), province),
+            city = COALESCE(NULLIF(VALUES(city), ''), city),
             rating = VALUES(rating),
-            approve_date = VALUES(approve_date),
-            expire_date = VALUES(expire_date),
-            trustseal_url = VALUES(trustseal_url),
-            phone_type = VALUES(phone_type),
-            mobile_phone = VALUES(mobile_phone),
-            email_normalized = VALUES(email_normalized),
-            source_page = VALUES(source_page),
-            source_row = VALUES(source_row),
+            approve_date = COALESCE(NULLIF(VALUES(approve_date), ''), approve_date),
+            expire_date = COALESCE(NULLIF(VALUES(expire_date), ''), expire_date),
+            trustseal_url = COALESCE(NULLIF(VALUES(trustseal_url), ''), trustseal_url),
+            phone_type = IF(
+                VALUES(phone) IS NOT NULL AND VALUES(phone) != '',
+                VALUES(phone_type),
+                phone_type
+            ),
+            mobile_phone = IF(
+                VALUES(phone) IS NOT NULL AND VALUES(phone) != '',
+                VALUES(mobile_phone),
+                mobile_phone
+            ),
+            email_normalized = IF(
+                VALUES(email) IS NOT NULL AND VALUES(email) != '',
+                VALUES(email_normalized),
+                email_normalized
+            ),
+            source_page = COALESCE(VALUES(source_page), source_page),
+            source_row = COALESCE(VALUES(source_row), source_row),
             scrape_run_id = VALUES(scrape_run_id),
             updated_at = CURRENT_TIMESTAMP
     """
