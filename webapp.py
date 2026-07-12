@@ -22,7 +22,7 @@ import bot_queries as q
 from crm_db import ROLE_SUPER, authenticate_admin, ensure_crm_tables, CALL_OUTCOMES
 from jalali_utils import format_jdate, format_jdatetime
 from crm_panel import crm_bp
-from db import ensure_domain_detail_columns, load_config, mysql_connection
+from db import ensure_domain_detail_columns, ensure_domain_indexes, load_config, mysql_connection
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("WEB_SECRET_KEY") or secrets.token_hex(32)
