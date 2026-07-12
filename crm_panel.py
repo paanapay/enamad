@@ -270,16 +270,37 @@ def campaigns_list():
     return render_template("crm/campaigns.html", rows=rows)
 
 
+def _parse_selected_domain_ids(form_or_args) -> list[int]:
+    ids: list[int] = []
+    for raw in form_or_args.getlist("domain_id"):
+        if str(raw).isdigit():
+            ids.append(int(raw))
+    if not ids:
+        for part in (form_or_args.get("domain_ids") or "").replace("\n", ",").split(","):
+            part = part.strip()
+            if part.isdigit():
+                ids.append(int(part))
+    if not ids:
+        for part in (form_or_args.get("selected") or "").split(","):
+            part = part.strip()
+            if part.isdigit():
+                ids.append(int(part))
+    seen: set[int] = set()
+    unique: list[int] = []
+    for domain_id in ids:
+        if domain_id not in seen:
+            seen.add(domain_id)
+            unique.append(domain_id)
+    return unique
+
+
 @crm_bp.route("/campaigns/new", methods=["GET", "POST"])
 @login_required
 def campaign_new():
+    page_size = 50
+    post_selected_ids: list[int] = []
     if request.method == "POST":
-        domain_ids_raw = request.form.get("domain_ids", "")
-        domain_ids = []
-        for part in domain_ids_raw.replace("\n", ",").split(","):
-            part = part.strip()
-            if part.isdigit():
-                domain_ids.append(int(part))
+        domain_ids = _parse_selected_domain_ids(request.form)
         data = {
             "name": request.form.get("name", "").strip(),
             "channel": request.form.get("channel", "sms"),
@@ -290,6 +311,7 @@ def campaign_new():
         }
         if not data["name"] or not data["template_id"] or not domain_ids:
             flash("نام، قالب و حداقل یک دامنه الزامی است.", "error")
+            post_selected_ids = domain_ids
         else:
             with mysql_connection(_config().mysql) as conn:
                 campaign_id = create_campaign(conn, data)
@@ -311,21 +333,37 @@ def campaign_new():
 
     query = (request.args.get("q") or "").strip()
     phone_filter = request.args.get("phone_type", "")
-    selected_ids = request.args.getlist("domain_id")
-    domains = []
+    selected_ids = post_selected_ids or _parse_selected_domain_ids(request.args)
+    try:
+        page = max(0, int(request.args.get("page", 0)))
+    except ValueError:
+        page = 0
     with mysql_connection(_config().mysql) as conn:
         templates = list_templates(conn)
-        if query:
-            domains = q.search_domains(conn, query, limit=50)
-        elif phone_filter:
-            domains = q.get_domains_by_phone_type(conn, phone_filter, limit=50)
+        from crm_db import count_domains_for_campaign, list_domains_for_campaign
+
+        total = count_domains_for_campaign(
+            conn, query=query, phone_type=phone_filter
+        )
+        domains = list_domains_for_campaign(
+            conn,
+            query=query,
+            phone_type=phone_filter,
+            offset=page * page_size,
+            limit=page_size,
+        )
+    pages = (total + page_size - 1) // page_size if total else 1
     return render_template(
         "crm/campaign_new.html",
         templates=templates,
         domains=domains,
         query=query,
         phone_filter=phone_filter,
-        selected_ids=[int(x) for x in selected_ids if x.isdigit()],
+        selected_ids=selected_ids,
+        page=page,
+        pages=pages,
+        total=total,
+        page_size=page_size,
     )
 
 

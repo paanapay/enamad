@@ -236,7 +236,7 @@ input:focus {
   font-family: inherit;
 }
 
-.btn:hover {
+.btn:not(.ghost):hover {
   background: #0284c7;
 }
 
@@ -244,6 +244,18 @@ input:focus {
   background: transparent;
   border: 1px solid var(--line);
   color: var(--text);
+}
+
+.btn.ghost:hover {
+  background: var(--panel2);
+  border-color: var(--accent2);
+  color: var(--accent);
+}
+
+.btn.ghost.active:hover {
+  background: #0284c7;
+  border-color: #0284c7;
+  color: #fff;
 }
 
 .pager {
@@ -283,6 +295,12 @@ input:focus {
 .badge.no {
   background: rgba(100, 116, 139, 0.12);
   color: #475569;
+}
+
+.badge.muted {
+  background: var(--panel2);
+  color: var(--muted);
+  font-weight: 600;
 }
 
 .kv {
@@ -699,8 +717,12 @@ input:focus {
   padding: 0;
 }
 
-.btn-link.danger {
-  color: var(--red);
+.btn-link:hover {
+  text-decoration: underline;
+}
+
+.btn-link.danger:hover {
+  color: #b91c1c;
 }
 
 .muted {
@@ -775,4 +797,19 @@ textarea {
   border-radius: 10px;
   font-size: 14px;
   font-family: inherit;
+}
+
+/* Jalali datepicker — align with panel theme */
+jdp-container {
+  font-family: Vazir, Tahoma, "Segoe UI", sans-serif;
+}
+
+jdp-container .jdp-btn-today,
+jdp-container .jdp-btn-empty,
+jdp-container .jdp-btn-close {
+  border-radius: 8px;
+}
+
+jdp-container .jdp-day.selected {
+  background: var(--accent2) !important;
 }

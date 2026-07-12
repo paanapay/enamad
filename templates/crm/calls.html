@@ -36,12 +36,12 @@
     <tbody>
       {% for c in rows %}
       <tr>
-        <td class="mono">{{ c.called_at }}</td>
+        <td class="mono">{{ c.called_at|jdatetime }}</td>
         <td class="mono"><a href="{{ url_for('domain_detail', domain_id=c.domain_id) }}">{{ c.domain }}</a></td>
         <td>{{ c.business_name or '—' }}<div class="muted" style="font-size:12px">{{ c.owner_name or '' }}</div></td>
         <td class="mono">{{ c.phone_used or c.mobile_phone or '—' }}</td>
         <td><span class="badge {{ 'ok' if c.outcome in ('interested','callback','converted') else 'no' }}">{{ c.outcome|call_outcome }}</span></td>
-        <td class="mono">{{ c.next_follow_up_at or '—' }}</td>
+        <td class="mono">{{ c.next_follow_up_at|jdate }}</td>
         <td>{{ c.created_by_display or c.created_by_name or '—' }}</td>
         <td><a href="{{ url_for('crm.call_detail', call_id=c.id) }}">جزئیات ›</a></td>
       </tr>

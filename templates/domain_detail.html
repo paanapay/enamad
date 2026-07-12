@@ -32,13 +32,13 @@
 <div class="panel">
   <h2>اطلاعات نماد</h2>
   <div class="kv">
-    <div class="k">تاریخ صدور</div><div class="mono">{{ d.approve_date or '—' }}</div>
-    <div class="k">تاریخ انقضا</div><div class="mono">{{ d.expire_date or '—' }}</div>
+    <div class="k">تاریخ صدور</div><div class="mono">{{ d.approve_date|jdate }}</div>
+    <div class="k">تاریخ انقضا</div><div class="mono">{{ d.expire_date|jdate }}</div>
     <div class="k">شناسه نماد</div><div class="mono">{{ d.enamad_id or '—' }}</div>
     <div class="k">کد</div><div class="mono">{{ d.code or '—' }}</div>
     <div class="k">نماد اعتماد</div>
     <div>{% if d.trustseal_url %}<a href="{{ d.trustseal_url }}" target="_blank" rel="noopener">مشاهده گواهی ↗</a>{% else %}—{% endif %}</div>
-    <div class="k">آخرین به‌روز</div><div class="mono">{{ d.updated_at or '—' }}</div>
+    <div class="k">آخرین به‌روز</div><div class="mono">{{ d.updated_at|jdatetime }}</div>
   </div>
   <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
     <a class="btn" href="{{ url_for('estelam', domain=d.domain) }}">استعلام زندهٔ مجدد</a>
@@ -53,8 +53,8 @@
   <div class="kv" style="margin-bottom:14px">
     <div class="k">آخرین وضعیت</div>
     <div><span class="badge {{ 'ok' if latest_call.outcome in ('interested','callback','converted') else 'no' }}">{{ latest_call.outcome|call_outcome }}</span></div>
-    <div class="k">آخرین تماس</div><div class="mono">{{ latest_call.called_at }}</div>
-    <div class="k">پیگیری بعدی</div><div class="mono">{{ latest_call.next_follow_up_at or '—' }}</div>
+    <div class="k">آخرین تماس</div><div class="mono">{{ latest_call.called_at|jdatetime }}</div>
+    <div class="k">پیگیری بعدی</div><div class="mono">{{ latest_call.next_follow_up_at|jdate }}</div>
     {% if latest_call.notes %}
     <div class="k">یادداشت</div><div>{{ latest_call.notes }}</div>
     {% endif %}
@@ -66,10 +66,10 @@
     <tbody>
       {% for c in call_history %}
       <tr>
-        <td class="mono">{{ c.called_at }}</td>
+        <td class="mono">{{ c.called_at|jdatetime }}</td>
         <td><span class="badge {{ 'ok' if c.outcome in ('interested','callback','converted') else 'no' }}">{{ c.outcome|call_outcome }}</span></td>
         <td class="mono">{{ c.phone_used or '—' }}</td>
-        <td class="mono">{{ c.next_follow_up_at or '—' }}</td>
+        <td class="mono">{{ c.next_follow_up_at|jdate }}</td>
         <td class="muted" style="font-size:12px;max-width:200px">{{ c.notes or '' }}</td>
         <td><a href="{{ url_for('crm.call_detail', call_id=c.id) }}">جزئیات</a></td>
       </tr>

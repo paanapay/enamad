@@ -17,13 +17,13 @@
 <div class="panel" style="margin-top:20px">
   <h2>وضعیت جمع‌آوری داده</h2>
   <div class="kv">
-    <div class="k">آخرین به‌روزرسانی دیتابیس</div><div>{{ stats.last_update or '—' }}</div>
+    <div class="k">آخرین به‌روزرسانی دیتابیس</div><div class="mono">{{ stats.last_update|jdatetime }}</div>
     <div class="k">صفحات پوشش‌داده‌شده</div><div>{{ stats.scrape.distinct_pages_in_db|group }} صفحه</div>
     <div class="k">آخرین صفحهٔ مؤثر</div><div>{{ stats.scrape.effective_last_page|group }}</div>
     {% if stats.last_run %}
     <div class="k">آخرین اجرای اسکرپ</div>
     <div>{{ stats.last_run.status }} — {{ stats.last_run.records_saved|group }} رکورد
-      ({{ stats.last_run.finished_at or stats.last_run.started_at }})</div>
+      ({{ (stats.last_run.finished_at or stats.last_run.started_at)|jdatetime }})</div>
     {% endif %}
   </div>
 </div>

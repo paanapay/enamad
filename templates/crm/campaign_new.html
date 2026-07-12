@@ -5,7 +5,7 @@
 <p><a href="{{ url_for('crm.campaigns_list') }}">‹ بازگشت</a></p>
 <h1>ارسال دستی به دامنه‌ها</h1>
 
-<form method="post" class="panel">
+<form method="post" class="panel" id="campaign-form">
   <div class="form-row">
     <label>نام کمپین *</label>
     <input type="text" name="name" required style="width:100%">
@@ -29,49 +29,161 @@
     <label><input type="checkbox" name="mobile_only" checked> فقط موبایل (پیامک به تلفن ثابت ارسال نشود)</label>
   </div>
   <div class="form-row">
-    <label>شناسه دامنه‌ها (با کاما یا خط جدید) *</label>
-    <textarea name="domain_ids" rows="4" style="width:100%" placeholder="مثال: 12, 45, 78">{% for sid in selected_ids %}{{ sid }}{% if not loop.last %}, {% endif %}{% endfor %}</textarea>
-  </div>
-  <div class="form-row">
     <label><input type="checkbox" name="send_now" checked> بلافاصله ارسال شود</label>
   </div>
-  <button class="btn" type="submit">ایجاد و ارسال</button>
-</form>
 
-<div class="panel">
-  <h2>انتخاب دامنه از لیست</h2>
-  <form method="get" class="searchbar">
-    <input type="search" name="q" value="{{ query }}" placeholder="جستجو دامنه یا نام کسب‌وکار…">
-    <select name="phone_type">
-      <option value="">همه تلفن‌ها</option>
-      <option value="mobile" {{ 'selected' if phone_filter=='mobile' }}>فقط موبایل</option>
-      <option value="landline" {{ 'selected' if phone_filter=='landline' }}>فقط ثابت</option>
-    </select>
-    <button class="btn" type="submit">جستجو</button>
-  </form>
-  {% if domains %}
-  <table>
-    <thead><tr><th></th><th>ID</th><th>دامنه</th><th>تلفن</th><th>نوع</th><th>موبایل</th><th>ایمیل</th></tr></thead>
-    <tbody>
-      {% for d in domains %}
-      <tr>
-        <td><input type="checkbox" class="domain-pick" value="{{ d.id }}" {{ 'checked' if d.id in selected_ids else '' }}></td>
-        <td class="mono">{{ d.id }}</td>
-        <td><a href="{{ url_for('domain_detail', domain_id=d.id) }}">{{ d.domain }}</a></td>
-        <td class="mono">{{ d.phone or '—' }}</td>
-        <td><span class="badge {{ 'ok' if d.phone_type in ('mobile','mixed') else 'no' }}">{{ d.phone_type|phone_label }}</span></td>
-        <td class="mono">{{ d.mobile_phone or '—' }}</td>
-        <td class="mono">{{ d.email_normalized or '—' }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  <button type="button" class="btn ghost" onclick="applySelected()" style="margin-top:12px">افزودن انتخاب‌شده‌ها به لیست</button>
-  {% endif %}
-</div>
+  <input type="hidden" name="domain_ids" id="domain-ids-field" value="{{ selected_ids|join(',') }}">
+
+  <div class="panel" style="margin-top:8px;padding:0;overflow:auto">
+    <div style="padding:18px 20px 0">
+      <h2 style="margin:0 0 6px">انتخاب دامنه‌ها *</h2>
+      <p class="muted" style="margin:0 0 14px;font-size:13px">
+        پیش‌فرض: ترتیب سایت اینماد.
+        <span id="selected-count">{{ selected_ids|length|group }}</span> دامنه انتخاب شده.
+      </p>
+    </div>
+
+    <div class="searchbar" style="padding:0 20px 14px">
+      <input type="search" id="domain-search" value="{{ query }}" placeholder="جستجو دامنه یا نام کسب‌وکار…">
+      <select id="phone-filter">
+        <option value="">همه تلفن‌ها</option>
+        <option value="mobile" {{ 'selected' if phone_filter=='mobile' }}>فقط موبایل</option>
+        <option value="landline" {{ 'selected' if phone_filter=='landline' }}>فقط ثابت</option>
+        <option value="mixed" {{ 'selected' if phone_filter=='mixed' }}>موبایل+ثابت</option>
+      </select>
+      <button class="btn ghost" type="button" onclick="applyDomainFilters()">اعمال فیلتر</button>
+      {% if query or phone_filter %}
+      <a class="btn ghost" href="{{ url_for('crm.campaign_new', selected=selected_ids|join(',')) }}">حذف فیلتر</a>
+      {% endif %}
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width:36px"><input type="checkbox" id="pick-page" title="انتخاب همه در این صفحه"></th>
+          <th>دامنه</th>
+          <th>کسب‌وکار</th>
+          <th>تلفن</th>
+          <th>موبایل</th>
+          <th>آدرس ایمیل</th>
+          <th>پیامک</th>
+          <th>ایمیل ارسالی</th>
+          <th>تماس</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in domains %}
+        <tr>
+          <td><input type="checkbox" class="domain-pick" value="{{ d.id }}" {{ 'checked' if d.id in selected_ids else '' }}></td>
+          <td class="mono"><a href="{{ url_for('domain_detail', domain_id=d.id) }}" target="_blank">{{ d.domain }}</a></td>
+          <td>{{ d.business_name or '—' }}</td>
+          <td class="mono">{{ d.phone or '—' }}</td>
+          <td class="mono">{{ d.mobile_phone or '—' }}</td>
+          <td class="mono">{{ d.email_normalized or '—' }}</td>
+          <td><span class="badge {{ 'ok' if d.sms_sent else 'muted' }}">{{ 'ارسال شده' if d.sms_sent else '—' }}</span></td>
+          <td><span class="badge {{ 'ok' if d.email_sent else 'muted' }}">{{ 'ارسال شده' if d.email_sent else '—' }}</span></td>
+          <td><span class="badge {{ 'ok' if d.has_call else 'muted' }}">{{ 'تماس داشته' if d.has_call else '—' }}</span></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9" class="empty">دامنه‌ای یافت نشد.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if pages > 1 %}
+    <div class="pager" id="domain-pager">
+      {% if page > 0 %}
+        <a href="#" data-page="{{ page - 1 }}">‹ قبلی</a>
+      {% else %}<span class="disabled">‹ قبلی</span>{% endif %}
+      <span>صفحه {{ (page+1)|group }} از {{ pages|group }} ({{ total|group }} دامنه)</span>
+      {% if page + 1 < pages %}
+        <a href="#" data-page="{{ page + 1 }}">بعدی ›</a>
+      {% else %}<span class="disabled">بعدی ›</span>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+
+  <button class="btn" type="submit" style="margin-top:16px">ایجاد و ارسال</button>
+</form>
 {% endblock %}
 {% block scripts %}
 <script>
+const selected = new Set({{ selected_ids|tojson }});
+
+function syncHiddenField() {
+  document.getElementById('domain-ids-field').value = [...selected].join(',');
+  const countEl = document.getElementById('selected-count');
+  if (countEl) countEl.textContent = selected.size.toLocaleString('fa-IR');
+}
+
+function syncCheckboxes() {
+  document.querySelectorAll('.domain-pick').forEach(cb => {
+    cb.checked = selected.has(cb.value);
+  });
+  const pageBox = document.getElementById('pick-page');
+  const picks = [...document.querySelectorAll('.domain-pick')];
+  if (pageBox) {
+    pageBox.checked = picks.length > 0 && picks.every(cb => selected.has(cb.value));
+    pageBox.indeterminate = picks.some(cb => selected.has(cb.value)) && !pageBox.checked;
+  }
+}
+
+function campaignListUrl(page) {
+  const params = new URLSearchParams();
+  const q = document.getElementById('domain-search').value.trim();
+  const phone = document.getElementById('phone-filter').value;
+  if (q) params.set('q', q);
+  if (phone) params.set('phone_type', phone);
+  if (page) params.set('page', String(page));
+  if (selected.size) params.set('selected', [...selected].join(','));
+  const qs = params.toString();
+  return '{{ url_for("crm.campaign_new") }}' + (qs ? '?' + qs : '');
+}
+
+function applyDomainFilters() {
+  window.location.href = campaignListUrl(0);
+}
+
+document.querySelectorAll('.domain-pick').forEach(cb => {
+  cb.addEventListener('change', () => {
+    if (cb.checked) selected.add(cb.value);
+    else selected.delete(cb.value);
+    syncHiddenField();
+    syncCheckboxes();
+  });
+});
+
+const pickPage = document.getElementById('pick-page');
+if (pickPage) {
+  pickPage.addEventListener('change', () => {
+    document.querySelectorAll('.domain-pick').forEach(cb => {
+      if (pickPage.checked) selected.add(cb.value);
+      else selected.delete(cb.value);
+      cb.checked = pickPage.checked;
+    });
+    syncHiddenField();
+    syncCheckboxes();
+  });
+}
+
+document.querySelectorAll('#domain-pager a[data-page]').forEach(link => {
+  link.addEventListener('click', e => {
+    e.preventDefault();
+    window.location.href = campaignListUrl(link.dataset.page);
+  });
+});
+
+document.getElementById('domain-search').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    applyDomainFilters();
+  }
+});
+
+document.getElementById('campaign-form').addEventListener('submit', () => {
+  syncHiddenField();
+});
+
 function filterTemplates() {
   const ch = document.getElementById('channel-select').value;
   document.getElementById('mobile-only-row').style.display = ch === 'sms' ? 'block' : 'none';
@@ -82,13 +194,9 @@ function filterTemplates() {
     }
   });
 }
-function applySelected() {
-  const ids = [...document.querySelectorAll('.domain-pick:checked')].map(el => el.value);
-  const ta = document.querySelector('textarea[name=domain_ids]');
-  const existing = ta.value.split(/[,\s]+/).filter(Boolean);
-  const merged = [...new Set([...existing, ...ids])];
-  ta.value = merged.join(', ');
-}
+
+syncHiddenField();
+syncCheckboxes();
 filterTemplates();
 </script>
 {% endblock %}

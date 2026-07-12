@@ -18,7 +18,7 @@
     <div class="k">قالب</div><div>{{ campaign.template_name }}</div>
     <div class="k">وضعیت</div><div>{{ campaign.status }}</div>
     <div class="k">فقط موبایل</div><div>{{ 'بله' if campaign.mobile_only else 'خیر' }}</div>
-    <div class="k">تاریخ</div><div>{{ campaign.created_at }}</div>
+    <div class="k">تاریخ</div><div class="mono">{{ campaign.created_at|jdatetime }}</div>
   </div>
   {% if campaign.status != 'completed' and campaign.status != 'running' %}
   <form method="post" action="{{ url_for('crm.campaign_send', campaign_id=campaign.id) }}" style="margin-top:14px">
@@ -39,7 +39,7 @@
         <td>{{ l.recipient_type or '—' }}</td>
         <td><span class="badge {{ 'ok' if l.status=='sent' else ('no' if l.status=='failed' else '') }}">{{ l.status }}</span></td>
         <td class="muted" style="font-size:12px">{{ l.error_message or '' }}</td>
-        <td class="mono">{{ l.sent_at or l.created_at }}</td>
+        <td class="mono">{{ (l.sent_at or l.created_at)|jdatetime }}</td>
       </tr>
       {% else %}
       <tr><td colspan="6" class="empty">لاگی ثبت نشده.</td></tr>

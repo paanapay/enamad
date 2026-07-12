@@ -724,6 +724,89 @@ def count_message_logs(conn, *, campaign_id: int | None = None) -> int:
         return int((cursor.fetchone() or {}).get("c") or 0)
 
 
+_DOMAIN_OUTREACH_FIELDS = """
+    d.id, d.domain, d.business_name, d.owner_name, d.phone, d.email,
+    d.phone_type, d.mobile_phone, d.email_normalized,
+    d.province, d.city, d.approve_date, d.expire_date, d.rating,
+    EXISTS(
+        SELECT 1 FROM message_logs ml
+        WHERE ml.domain_id = d.id AND ml.channel = 'sms' AND ml.status = 'sent'
+    ) AS sms_sent,
+    EXISTS(
+        SELECT 1 FROM message_logs ml
+        WHERE ml.domain_id = d.id AND ml.channel = 'email' AND ml.status = 'sent'
+    ) AS email_sent,
+    EXISTS(
+        SELECT 1 FROM crm_call_logs cl WHERE cl.domain_id = d.id
+    ) AS has_call
+"""
+
+
+def _campaign_domain_filters(
+    query: str, phone_type: str
+) -> tuple[str, list[Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if query:
+        pattern = f"%{query}%"
+        clauses.append(
+            "(d.domain LIKE %s OR d.business_name LIKE %s OR d.owner_name LIKE %s)"
+        )
+        params.extend([pattern, pattern, pattern])
+    if phone_type == "mobile":
+        clauses.append("d.phone_type IN ('mobile', 'mixed')")
+    elif phone_type:
+        clauses.append("d.phone_type = %s")
+        params.append(phone_type)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return where, params
+
+
+def list_domains_for_campaign(
+    conn,
+    *,
+    query: str = "",
+    phone_type: str = "",
+    offset: int = 0,
+    limit: int = 50,
+) -> list[dict]:
+    where, params = _campaign_domain_filters(query, phone_type)
+    if query:
+        order = """
+            ORDER BY
+                CASE WHEN d.domain = %s THEN 0
+                     WHEN d.domain LIKE %s THEN 1
+                     ELSE 2 END,
+                d.updated_at DESC, d.id ASC
+        """
+        order_params = [query, f"{query}%"]
+    else:
+        order = "ORDER BY d.source_page ASC, d.source_row ASC, d.id ASC"
+        order_params = []
+    sql = f"""
+        SELECT {_DOMAIN_OUTREACH_FIELDS}
+        FROM enamad_domains d
+        {where}
+        {order}
+        LIMIT %s OFFSET %s
+    """
+    with conn.cursor() as cursor:
+        cursor.execute(sql, [*params, *order_params, limit, offset])
+        return list(cursor.fetchall())
+
+
+def count_domains_for_campaign(
+    conn, *, query: str = "", phone_type: str = ""
+) -> int:
+    where, params = _campaign_domain_filters(query, phone_type)
+    with conn.cursor() as cursor:
+        cursor.execute(
+            f"SELECT COUNT(*) AS c FROM enamad_domains d {where}",
+            params,
+        )
+        return int((cursor.fetchone() or {}).get("c") or 0)
+
+
 def get_domains_by_ids(conn, domain_ids: list[int]) -> list[dict]:
     if not domain_ids:
         return []

@@ -33,8 +33,8 @@
     <div class="k">آدرس</div><div>{{ result.business_address or '—' }}</div>
     <div class="k">تلفن</div><div class="mono">{{ result.phone or '—' }}</div>
     <div class="k">ایمیل</div><div class="mono">{{ result.email or '—' }}</div>
-    <div class="k">تاریخ صدور</div><div class="mono">{{ result.approve_date or '—' }}</div>
-    <div class="k">تاریخ انقضا</div><div class="mono">{{ result.expire_date or '—' }}</div>
+    <div class="k">تاریخ صدور</div><div class="mono">{{ result.approve_date|jdate }}</div>
+    <div class="k">تاریخ انقضا</div><div class="mono">{{ result.expire_date|jdate }}</div>
     <div class="k">نماد اعتماد</div>
     <div>{% if result.trustseal_url %}<a href="{{ result.trustseal_url }}" target="_blank" rel="noopener">مشاهده گواهی ↗</a>{% else %}—{% endif %}</div>
   </div>

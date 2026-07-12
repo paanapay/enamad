@@ -20,6 +20,7 @@ from flask import (
 
 import bot_queries as q
 from crm_db import ROLE_SUPER, authenticate_admin, ensure_crm_tables, CALL_OUTCOMES
+from jalali_utils import format_jdate, format_jdatetime
 from crm_panel import crm_bp
 from db import ensure_domain_detail_columns, load_config, mysql_connection
 
@@ -134,6 +135,16 @@ def enamad_status_label_filter(value):
 @app.template_filter("call_outcome")
 def call_outcome_filter(value):
     return CALL_OUTCOMES.get(value or "", value or "—")
+
+
+@app.template_filter("jdate")
+def jdate_filter(value):
+    return format_jdate(value)
+
+
+@app.template_filter("jdatetime")
+def jdatetime_filter(value):
+    return format_jdatetime(value)
 
 
 @app.route("/healthz")

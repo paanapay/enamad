@@ -71,10 +71,35 @@
 
   <div class="form-row">
     <label>تاریخ پیگیری بعدی</label>
-    <input type="date" name="next_follow_up_at" style="width:200px">
+    <input
+      type="text"
+      data-jdp
+      data-jdp-only-date
+      data-jdp-target-value-input="#next_follow_up_at_gregorian"
+      data-jdp-target-value-type="gregorian"
+      placeholder="مثلاً ۱۴۰۴/۰۴/۲۲"
+      style="width:200px"
+      autocomplete="off"
+    >
+    <input type="hidden" name="next_follow_up_at" id="next_follow_up_at_gregorian">
     <div class="hint muted">برای «تماس مجدد» یا «علاقه‌مند» پر کنید تا در لیست پیگیری امروز بیاید.</div>
   </div>
 
   <button class="btn" type="submit">ثبت تماس</button>
 </form>
+{% endblock %}
+{% block scripts %}
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/jalalidatepicker/jalalidatepicker.min.css') }}">
+<script src="{{ url_for('static', filename='vendor/jalalidatepicker/jalalidatepicker.min.js') }}"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    if (window.jalaliDatepicker) {
+      jalaliDatepicker.startWatch({
+        persianDigits: true,
+        targetValueInput: 'attr',
+        targetValueType: 'attr',
+      });
+    }
+  });
+</script>
 {% endblock %}
