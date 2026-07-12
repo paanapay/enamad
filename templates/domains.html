@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% set active = 'domains' %}
 {% block title %}دامنه‌ها{% endblock %}
-{% macro pager(sort, query, page, pages) %}
+{% macro pager(sort, query, page, pages, phone_type) %}
 <div class="pager">
   {% if page > 0 %}
-    <a href="{{ url_for('domains', sort=sort, q=query, page=page-1) }}">‹ قبلی</a>
+    <a href="{{ url_for('domains', sort=sort, q=query, phone_type=phone_type, page=page-1) }}">‹ قبلی</a>
   {% else %}<span class="disabled">‹ قبلی</span>{% endif %}
   <span>صفحه {{ (page+1)|group }} از {{ (pages if pages else 1)|group }}</span>
   {% if page + 1 < pages %}
-    <a href="{{ url_for('domains', sort=sort, q=query, page=page+1) }}">بعدی ›</a>
+    <a href="{{ url_for('domains', sort=sort, q=query, phone_type=phone_type, page=page+1) }}">بعدی ›</a>
   {% else %}<span class="disabled">بعدی ›</span>{% endif %}
 </div>
 {% endmacro %}
@@ -17,11 +17,17 @@
 
 <form class="searchbar" method="get" action="{{ url_for('domains') }}">
   <input type="search" name="q" value="{{ query }}" placeholder="جستجو: دامنه، نام کسب‌وکار یا مالک…">
+  <select name="phone_type">
+    <option value="">همه تلفن‌ها</option>
+    <option value="mobile" {{ 'selected' if phone_type=='mobile' }}>موبایل</option>
+    <option value="landline" {{ 'selected' if phone_type=='landline' }}>ثابت</option>
+    <option value="mixed" {{ 'selected' if phone_type=='mixed' }}>موبایل+ثابت</option>
+  </select>
   <button class="btn" type="submit">جستجو</button>
-  {% if query %}<a class="btn ghost" href="{{ url_for('domains') }}">حذف فیلتر</a>{% endif %}
+  {% if query or phone_type %}<a class="btn ghost" href="{{ url_for('domains') }}">حذف فیلتر</a>{% endif %}
 </form>
 
-{% if not query %}
+{% if not query and not phone_type %}
 <div class="tabs">
   <a href="{{ url_for('domains', sort='latest') }}" class="{{ 'active' if sort=='latest' }}">ترتیب سایت</a>
   <a href="{{ url_for('domains', sort='approve') }}" class="{{ 'active' if sort=='approve' }}">جدیدترین صدور</a>
@@ -32,24 +38,25 @@
 <div class="panel" style="padding:0;overflow:auto">
   <table>
     <thead>
-      <tr><th>دامنه</th><th>کسب‌وکار</th><th>استان / شهر</th><th>امتیاز</th><th>انقضا</th><th></th></tr>
+      <tr><th>دامنه</th><th>کسب‌وکار</th><th>تلفن</th><th>نوع</th><th>استان / شهر</th><th>امتیاز</th><th></th></tr>
     </thead>
     <tbody>
       {% for d in rows %}
       <tr>
         <td class="mono"><a href="{{ url_for('domain_detail', domain_id=d.id) }}">{{ d.domain }}</a></td>
         <td>{{ d.business_name or '—' }}<div class="muted" style="font-size:12px">{{ d.owner_name or '' }}</div></td>
+        <td class="mono">{{ d.phone or '—' }}</td>
+        <td><span class="badge {{ 'ok' if d.phone_type in ('mobile','mixed') else 'no' }}">{{ d.phone_type|phone_label }}</span></td>
         <td>{{ d.province or '—' }}{% if d.city %} — {{ d.city }}{% endif %}</td>
         <td class="stars">{{ d.rating|stars }}</td>
-        <td class="mono">{{ d.expire_date or '—' }}</td>
         <td><a href="{{ url_for('domain_detail', domain_id=d.id) }}">جزئیات ›</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="empty">موردی یافت نشد.</td></tr>
+      <tr><td colspan="7" class="empty">موردی یافت نشد.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
 
-{% if not query %}{{ pager(sort, query, page, pages) }}{% endif %}
+{% if not query %}{{ pager(sort, query, page, pages, phone_type) }}{% endif %}
 {% endblock %}

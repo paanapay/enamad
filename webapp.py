@@ -1,23 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Admin web panel for browsing the Enamad domain database.
-
-Lets an admin (behind a password login) browse the scraped list, inspect a
-domain's details/services, look up bot users, and run a live استعلام against
-enamad.ir for a domain that may not be in the local DB yet.
-
-Run locally:
-    export WEB_ADMIN_PASSWORD=secret
-    python webapp.py                 # dev server on :8095
-
-Production (Docker) uses gunicorn (see docker-compose.yml `web` service).
-"""
+"""Admin web panel for browsing the Enamad domain database."""
 from __future__ import annotations
 
 import os
 import secrets
 from functools import wraps
-from pathlib import Path
 
 from flask import (
     Flask,
@@ -31,10 +19,13 @@ from flask import (
 )
 
 import bot_queries as q
+from crm_db import ROLE_SUPER, authenticate_admin, ensure_crm_tables
+from crm_panel import crm_bp
 from db import load_config, mysql_connection
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("WEB_SECRET_KEY") or secrets.token_hex(32)
+app.register_blueprint(crm_bp)
 
 ADMIN_PASSWORD = os.environ.get("WEB_ADMIN_PASSWORD", "")
 LIVE_SEARCH = (os.environ.get("WEB_LIVE_SEARCH", "yes").strip().lower()
@@ -51,14 +42,53 @@ def app_config():
     return _APP_CONFIG
 
 
+def _ensure_schema():
+    with mysql_connection(app_config().mysql) as conn:
+        ensure_crm_tables(conn)
+
+
 def login_required(view):
     @wraps(view)
     def wrapper(*args, **kwargs):
-        if not session.get("auth"):
+        if not session.get("admin_id"):
             return redirect(url_for("login", next=request.path))
         return view(*args, **kwargs)
 
     return wrapper
+
+
+def super_admin_required(view):
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        if session.get("admin_role") != ROLE_SUPER:
+            abort(403)
+        return view(*args, **kwargs)
+
+    return wrapper
+
+
+@app.before_request
+def _bootstrap_crm():
+    if not getattr(app, "_crm_ready", False):
+        try:
+            _ensure_schema()
+            app._crm_ready = True
+        except Exception:  # noqa: BLE001
+            pass
+
+
+@app.context_processor
+def inject_globals():
+    admin = None
+    if session.get("admin_id"):
+        admin = {
+            "id": session.get("admin_id"),
+            "username": session.get("admin_username"),
+            "display_name": session.get("admin_display_name"),
+            "role": session.get("admin_role"),
+            "is_super": session.get("admin_role") == ROLE_SUPER,
+        }
+    return {"current_admin": admin}
 
 
 @app.template_filter("group")
@@ -79,21 +109,66 @@ def stars_filter(value):
     return "★" * n + "☆" * (5 - n)
 
 
+@app.template_filter("phone_label")
+def phone_label_filter(value):
+    labels = {
+        "mobile": "موبایل",
+        "landline": "ثابت",
+        "mixed": "موبایل+ثابت",
+        "unknown": "نامشخص",
+        "none": "—",
+    }
+    return labels.get(value or "", value or "—")
+
+
 @app.route("/healthz")
 def healthz():
     return "ok", 200
 
 
+@app.route("/crm")
+def crm_redirect():
+    return redirect(url_for("crm.dashboard"))
+
+
+def _set_admin_session(admin: dict) -> None:
+    session["admin_id"] = admin["id"]
+    session["admin_username"] = admin["username"]
+    session["admin_display_name"] = admin.get("display_name") or admin["username"]
+    session["admin_role"] = admin["role"]
+    session["auth"] = True
+    session.permanent = True
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
         password = request.form.get("password", "")
-        if ADMIN_PASSWORD and secrets.compare_digest(password, ADMIN_PASSWORD):
-            session["auth"] = True
-            session.permanent = True
-            nxt = request.args.get("next") or url_for("dashboard")
-            return redirect(nxt)
-        flash("رمز عبور نادرست است.", "error")
+
+        with mysql_connection(app_config().mysql) as conn:
+            if username:
+                admin = authenticate_admin(conn, username, password)
+                if admin:
+                    _set_admin_session(admin)
+                    nxt = request.args.get("next") or url_for("dashboard")
+                    return redirect(nxt)
+
+            # Legacy: single password without username (migrates to admin user)
+            if not username and ADMIN_PASSWORD and secrets.compare_digest(password, ADMIN_PASSWORD):
+                ensure_crm_tables(conn)
+                from crm_db import list_admins
+
+                admins = list_admins(conn)
+                if admins:
+                    _set_admin_session(admins[0])
+                else:
+                    session["auth"] = True
+                    session.permanent = True
+                nxt = request.args.get("next") or url_for("dashboard")
+                return redirect(nxt)
+
+        flash("نام کاربری یا رمز عبور نادرست است.", "error")
     return render_template("login.html")
 
 
@@ -109,7 +184,10 @@ def dashboard():
     with mysql_connection(app_config().mysql) as conn:
         stats = q.get_stats(conn)
         users = q.get_bot_user_stats(conn)
-    return render_template("dashboard.html", stats=stats, users=users)
+        from crm_db import crm_stats
+
+        crm = crm_stats(conn)
+    return render_template("dashboard.html", stats=stats, users=users, crm=crm)
 
 
 @app.route("/domains")
@@ -117,6 +195,7 @@ def dashboard():
 def domains():
     query = (request.args.get("q") or "").strip()
     sort = request.args.get("sort", "latest")
+    phone_type = (request.args.get("phone_type") or "").strip()
     try:
         page = max(0, int(request.args.get("page", 0)))
     except ValueError:
@@ -127,8 +206,11 @@ def domains():
         if query:
             rows = q.search_domains(conn, query, limit=PAGE_SIZE)
             total = q.count_search(conn, query)
-            # search returns best matches (no offset paging); keep single page
             page = 0
+        elif phone_type:
+            rows = q.get_domains_by_phone_type(conn, phone_type, offset=offset, limit=PAGE_SIZE)
+            total = q.count_by_phone_type(conn, phone_type)
+            sort = "phone"
         elif sort == "top":
             rows = q.get_top_rated(conn, offset=offset, limit=PAGE_SIZE)
             total = q.count_top_rated(conn)
@@ -149,6 +231,7 @@ def domains():
         pages=pages,
         sort=sort,
         query=query,
+        phone_type=phone_type,
         page_size=PAGE_SIZE,
     )
 
@@ -190,6 +273,7 @@ def estelam():
 
 @app.route("/users")
 @login_required
+@super_admin_required
 def users():
     try:
         page = max(0, int(request.args.get("page", 0)))
@@ -215,7 +299,6 @@ def _clean_domain(domain: str) -> str:
 
 
 def _live_lookup(domain: str) -> dict | None:
-    """Live استعلام against enamad.ir, reusing the scraper client."""
     from extract_enamad import (
         EnamadClient,
         maybe_enrich_row,
@@ -232,5 +315,5 @@ def _live_lookup(domain: str) -> dict | None:
 
 if __name__ == "__main__":
     if not ADMIN_PASSWORD:
-        print("WARNING: WEB_ADMIN_PASSWORD not set — login will always fail.")
+        print("WARNING: WEB_ADMIN_PASSWORD not set — create admin via CRM after first DB init.")
     app.run(host="127.0.0.1", port=int(os.environ.get("WEB_PORT", "8095")))

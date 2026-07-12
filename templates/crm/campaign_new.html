@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% set active = 'crm' %}
+{% block title %}کمپین جدید{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('crm.campaigns_list') }}">‹ بازگشت</a></p>
+<h1>ارسال دستی به دامنه‌ها</h1>
+
+<form method="post" class="panel">
+  <div class="form-row">
+    <label>نام کمپین *</label>
+    <input type="text" name="name" required style="width:100%">
+  </div>
+  <div class="form-row">
+    <label>کانال *</label>
+    <select name="channel" id="channel-select" onchange="filterTemplates()">
+      <option value="sms">پیامک</option>
+      <option value="email">ایمیل</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label>قالب *</label>
+    <select name="template_id" id="template-select" required>
+      {% for t in templates %}
+      <option value="{{ t.id }}" data-channel="{{ t.channel }}">{{ t.name }} ({{ t.channel }})</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="form-row" id="mobile-only-row">
+    <label><input type="checkbox" name="mobile_only" checked> فقط موبایل (پیامک به تلفن ثابت ارسال نشود)</label>
+  </div>
+  <div class="form-row">
+    <label>شناسه دامنه‌ها (با کاما یا خط جدید) *</label>
+    <textarea name="domain_ids" rows="4" style="width:100%" placeholder="مثال: 12, 45, 78">{% for sid in selected_ids %}{{ sid }}{% if not loop.last %}, {% endif %}{% endfor %}</textarea>
+  </div>
+  <div class="form-row">
+    <label><input type="checkbox" name="send_now" checked> بلافاصله ارسال شود</label>
+  </div>
+  <button class="btn" type="submit">ایجاد و ارسال</button>
+</form>
+
+<div class="panel">
+  <h2>انتخاب دامنه از لیست</h2>
+  <form method="get" class="searchbar">
+    <input type="search" name="q" value="{{ query }}" placeholder="جستجو دامنه یا نام کسب‌وکار…">
+    <select name="phone_type">
+      <option value="">همه تلفن‌ها</option>
+      <option value="mobile" {{ 'selected' if phone_filter=='mobile' }}>فقط موبایل</option>
+      <option value="landline" {{ 'selected' if phone_filter=='landline' }}>فقط ثابت</option>
+    </select>
+    <button class="btn" type="submit">جستجو</button>
+  </form>
+  {% if domains %}
+  <table>
+    <thead><tr><th></th><th>ID</th><th>دامنه</th><th>تلفن</th><th>نوع</th><th>موبایل</th><th>ایمیل</th></tr></thead>
+    <tbody>
+      {% for d in domains %}
+      <tr>
+        <td><input type="checkbox" class="domain-pick" value="{{ d.id }}" {{ 'checked' if d.id in selected_ids else '' }}></td>
+        <td class="mono">{{ d.id }}</td>
+        <td><a href="{{ url_for('domain_detail', domain_id=d.id) }}">{{ d.domain }}</a></td>
+        <td class="mono">{{ d.phone or '—' }}</td>
+        <td><span class="badge {{ 'ok' if d.phone_type in ('mobile','mixed') else 'no' }}">{{ d.phone_type|phone_label }}</span></td>
+        <td class="mono">{{ d.mobile_phone or '—' }}</td>
+        <td class="mono">{{ d.email_normalized or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <button type="button" class="btn ghost" onclick="applySelected()" style="margin-top:12px">افزودن انتخاب‌شده‌ها به لیست</button>
+  {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function filterTemplates() {
+  const ch = document.getElementById('channel-select').value;
+  document.getElementById('mobile-only-row').style.display = ch === 'sms' ? 'block' : 'none';
+  document.querySelectorAll('#template-select option').forEach(opt => {
+    opt.hidden = opt.dataset.channel && opt.dataset.channel !== ch;
+    if (!opt.hidden && !document.querySelector('#template-select option:checked:not([hidden])')) {
+      opt.selected = true;
+    }
+  });
+}
+function applySelected() {
+  const ids = [...document.querySelectorAll('.domain-pick:checked')].map(el => el.value);
+  const ta = document.querySelector('textarea[name=domain_ids]');
+  const existing = ta.value.split(/[,\s]+/).filter(Boolean);
+  const merged = [...new Set([...existing, ...ids])];
+  ta.value = merged.join(', ');
+}
+filterTemplates();
+</script>
+{% endblock %}

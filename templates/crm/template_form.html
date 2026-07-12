@@ -1,0 +1,388 @@
+{% extends "base.html" %}
+{% set active = 'crm' %}
+{% block title %}{{ 'ویرایش قالب' if row else 'قالب جدید' }}{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('crm.templates_list') }}">‹ بازگشت به قالب‌ها</a></p>
+<h1>{{ 'ویرایش قالب' if row else 'قالب جدید' }}</h1>
+
+<div class="tpl-layout">
+  <!-- ================= FORM ================= -->
+  <form method="post" class="panel" id="template-form">
+    <div class="form-row">
+      <label>نام قالب *</label>
+      <input type="text" name="name" value="{{ row.name if row else '' }}" required style="width:100%">
+    </div>
+    <div class="form-row">
+      <label>کانال *</label>
+      <select name="channel" id="channel-select" onchange="onChannelChange()">
+        <option value="sms" {{ 'selected' if row and row.channel=='sms' else '' }}>پیامک (کاوه‌نگار Lookup)</option>
+        <option value="email" {{ 'selected' if row and row.channel=='email' else '' }}>ایمیل</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>توضیح</label>
+      <input type="text" name="description" value="{{ row.description if row else '' }}" style="width:100%">
+    </div>
+    <div class="form-row">
+      <label><input type="checkbox" name="is_active" {{ 'checked' if not row or row.is_active else '' }}> فعال</label>
+    </div>
+
+    <!-- ---------- SMS ---------- -->
+    <div id="sms-fields">
+      <h2>تنظیمات پیامک (کاوه‌نگار)</h2>
+      <p class="muted">الگو را در پنل کاوه‌نگار بسازید. متغیرهای الگو (token، token2، …) را به فیلدهای دامنه نگاشت کنید.</p>
+      <div class="form-row">
+        <label>نام الگو در کاوه‌نگار *</label>
+        <input type="text" name="kavenegar_template" id="kn-template"
+               value="{{ row.kavenegar_template if row else '' }}" dir="ltr" style="width:100%">
+      </div>
+      <input type="hidden" name="provider" value="kavenegar">
+
+      <div class="form-row">
+        <label>متن الگو (فقط برای پیش‌نمایش)</label>
+        <div class="vars-hint" id="sms-var-chips"></div>
+        <textarea name="sms_preview_text" id="sms-preview-text" rows="5" dir="rtl"
+                  placeholder="عین متن الگوی کاوه‌نگار را اینجا بنویسید، مثال:&#10;سلام %token%&#10;نماد اعتماد سایت %token2% صادر شد."
+                  style="width:100%">{{ row.sms_preview_text if row else '' }}</textarea>
+        <div class="hint muted">روی توکن‌های بالا کلیک کنید تا در محل مکان‌نما درج شوند. این متن ارسال نمی‌شود و فقط برای پیش‌نمایش است.</div>
+      </div>
+
+      <table class="mapping-table">
+        <thead><tr><th>پارامتر کاوه‌نگار</th><th>متغیر دامنه</th></tr></thead>
+        <tbody>
+          {% for kn_token in kavenegar_tokens %}
+          <tr>
+            <td class="mono">{{ kn_token }}</td>
+            <td>
+              <select name="map_{{ kn_token }}" class="token-map" data-token="{{ kn_token }}">
+                <option value="">— انتخاب نشده —</option>
+                {% for key, label in variables.items() %}
+                <option value="{{ key }}" {{ 'selected' if row and row.token_mapping.get(kn_token)==key else '' }}>{{ label }} ({{ key }})</option>
+                {% endfor %}
+              </select>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ---------- EMAIL ---------- -->
+    <div id="email-fields" style="display:none">
+      <h2>تنظیمات ایمیل</h2>
+      <div class="form-row">
+        <label>موضوع ایمیل</label>
+        <input type="text" name="email_subject" id="email-subject"
+               value="{{ row.email_subject if row else '' }}" style="width:100%">
+      </div>
+
+      <div class="form-row">
+        <label>متغیرها (کلیک = درج در محل مکان‌نما)</label>
+        <div class="vars-hint">
+          {% for key, label in variables.items() %}
+          <button type="button" class="var-chip" data-var="{{ key }}" title="{{ '{{' }}{{ key }}{{ '}}' }}">{{ label }}</button>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="editor-head">
+          <label style="margin:0">متن ایمیل</label>
+          <button type="button" id="toggle-html" class="btn ghost sm">‹/› کد HTML</button>
+        </div>
+        <textarea name="email_body" id="email-body">{{ row.email_body if row else '' }}</textarea>
+        <textarea id="html-source" class="html-source" dir="ltr" spellcheck="false" style="display:none"></textarea>
+        <div class="hint muted">با نوار ابزار متن را قالب‌بندی کنید؛ یا با «کد HTML» مستقیم کد را ببینید و ویرایش کنید. برای درج مقدار پویا روی متغیرهای بالا کلیک کنید.</div>
+      </div>
+    </div>
+
+    <button class="btn" type="submit" style="margin-top:16px">ذخیره</button>
+  </form>
+
+  <!-- ================= LIVE PREVIEW ================= -->
+  <div class="preview-col">
+    <div class="panel preview-panel">
+      <div class="preview-head">
+        <h2 style="margin:0">پیش‌نمایش زنده</h2>
+      </div>
+      <div class="preview-source">
+        <label class="muted" style="font-size:12px">داده پیش‌نمایش</label>
+        <div class="source-row">
+          <input type="text" id="preview-domain" placeholder="دامنه یا شناسه دامنه (خالی = نمونه)" style="flex:1">
+          <button type="button" class="btn ghost" id="load-domain-btn">بارگذاری</button>
+        </div>
+        <div class="muted" id="source-label" style="font-size:12px;margin-top:6px">در حال استفاده از داده نمونه</div>
+      </div>
+
+      <!-- SMS preview: phone mockup -->
+      <div id="sms-preview" class="phone-wrap">
+        <div class="phone">
+          <div class="phone-topbar">
+            <span class="phone-sender" id="phone-sender">کاوه‌نگار</span>
+            <span class="phone-time">اکنون</span>
+          </div>
+          <div class="phone-screen">
+            <div class="sms-bubble" id="sms-bubble">—</div>
+          </div>
+        </div>
+        <div class="muted" id="sms-fallback" style="font-size:12px;margin-top:10px"></div>
+      </div>
+
+      <!-- EMAIL preview -->
+      <div id="email-preview" class="email-wrap" style="display:none">
+        <div class="email-card">
+          <div class="email-subject" id="email-subject-preview">(بدون موضوع)</div>
+          <div class="email-meta">
+            <span>از: <span id="email-from">سامانه اعتماد</span></span>
+            <span id="email-to">به: {{ '{{email}}' }}</span>
+          </div>
+          <div class="email-body" id="email-body-preview"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/ckeditor/ckeditor.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/ckeditor/translations/fa.js') }}"></script>
+<script id="sample-context" type="application/json">{{ sample_context|tojson }}</script>
+<script>
+let previewContext = JSON.parse(document.getElementById('sample-context').textContent);
+const KN_TOKENS = {{ kavenegar_tokens|tojson }};
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function fillVars(text) {
+  // Replace {{key}} with context values.
+  return String(text || '').replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (m, key) => {
+    const v = previewContext[key];
+    return (v === undefined || v === null || v === '') ? '' : v;
+  });
+}
+
+function currentTokenValues() {
+  // Map kavenegar token -> resolved value based on the select mapping.
+  const map = {};
+  document.querySelectorAll('.token-map').forEach(sel => {
+    const varName = sel.value;
+    if (varName) map[sel.dataset.token] = previewContext[varName] ?? '';
+  });
+  return map;
+}
+
+function renderSmsPreview() {
+  const bubble = document.getElementById('sms-bubble');
+  const fallback = document.getElementById('sms-fallback');
+  const tokenVals = currentTokenValues();
+  let text = document.getElementById('sms-preview-text').value.trim();
+
+  if (text) {
+    // Replace %token%, %token2% ... with mapped values.
+    KN_TOKENS.forEach(tk => {
+      const re = new RegExp('%' + tk + '%', 'g');
+      text = text.replace(re, tokenVals[tk] ?? '');
+    });
+    bubble.textContent = text;
+    fallback.textContent = '';
+  } else {
+    // No preview text: show token -> value list.
+    bubble.innerHTML = '<span style="opacity:.6">متن الگو را وارد کنید تا پیش‌نمایش کامل ببینید.</span>';
+    const parts = [];
+    KN_TOKENS.forEach(tk => {
+      if (tokenVals[tk] !== undefined) parts.push(tk + ' = ' + esc(tokenVals[tk]));
+    });
+    fallback.innerHTML = parts.length
+      ? 'مقادیر نگاشت‌شده:<br>' + parts.join('<br>')
+      : 'هنوز متغیری نگاشت نشده است.';
+  }
+  document.getElementById('phone-sender').textContent =
+    document.getElementById('kn-template').value.trim() || 'کاوه‌نگار';
+}
+
+function looksLikeHtml(s) {
+  return /<[a-z][\s\S]*>/i.test(s || '');
+}
+
+function renderEmailPreview() {
+  const subj = fillVars(document.getElementById('email-subject').value);
+  document.getElementById('email-subject-preview').textContent = subj || '(بدون موضوع)';
+
+  const raw = document.getElementById('email-body').value;
+  const filled = fillVars(raw);
+  const bodyEl = document.getElementById('email-body-preview');
+  if (!filled.trim()) {
+    bodyEl.innerHTML = '<span style="opacity:.5">متن ایمیل را وارد کنید…</span>';
+  } else if (looksLikeHtml(filled)) {
+    bodyEl.innerHTML = filled;            // HTML content as-is
+  } else {
+    bodyEl.textContent = filled;          // plain text; CSS keeps line breaks
+  }
+  document.getElementById('email-to').textContent =
+    'به: ' + (previewContext.email_normalized || previewContext.email || '—');
+}
+
+const VAR_LABELS = {{ variables|tojson }};
+
+function insertIntoTextarea(ta, text) {
+  const start = ta.selectionStart ?? ta.value.length;
+  const end = ta.selectionEnd ?? ta.value.length;
+  ta.value = ta.value.slice(0, start) + text + ta.value.slice(end);
+  ta.focus();
+  ta.selectionStart = ta.selectionEnd = start + text.length;
+  renderPreview();
+}
+
+function renderSmsChips() {
+  const box = document.getElementById('sms-var-chips');
+  const ta = document.getElementById('sms-preview-text');
+  box.innerHTML = '';
+  let any = false;
+  document.querySelectorAll('.token-map').forEach(sel => {
+    const tk = sel.dataset.token;
+    const varName = sel.value;
+    if (!varName) return;
+    any = true;
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'var-chip';
+    chip.innerHTML = '<span class="chip-token">%' + tk + '%</span> ' + (VAR_LABELS[varName] || varName);
+    chip.addEventListener('click', () => insertIntoTextarea(ta, '%' + tk + '%'));
+    box.appendChild(chip);
+  });
+  if (!any) {
+    box.innerHTML = '<span class="muted" style="font-size:12px">ابتدا از جدول پایین، توکن‌ها را به متغیرها نگاشت کنید تا اینجا برای درج ظاهر شوند.</span>';
+  }
+}
+
+function renderPreview() {
+  const ch = document.getElementById('channel-select').value;
+  if (ch === 'sms') { renderSmsChips(); renderSmsPreview(); }
+  else renderEmailPreview();
+}
+
+function onChannelChange() {
+  const ch = document.getElementById('channel-select').value;
+  document.getElementById('sms-fields').style.display = ch === 'sms' ? 'block' : 'none';
+  document.getElementById('email-fields').style.display = ch === 'email' ? 'block' : 'none';
+  document.getElementById('sms-preview').style.display = ch === 'sms' ? 'block' : 'none';
+  document.getElementById('email-preview').style.display = ch === 'email' ? 'block' : 'none';
+  renderPreview();
+}
+
+/* ============ CKEditor 5 for email ============ */
+const emailTextarea = document.getElementById('email-body');
+let ckEditor = null;
+
+ClassicEditor.create(emailTextarea, {
+  language: { ui: 'fa', content: 'fa' },
+  toolbar: [
+    'heading', '|',
+    'bold', 'italic', '|',
+    'link', 'bulletedList', 'numberedList', '|',
+    'blockQuote', '|',
+    'undo', 'redo'
+  ],
+}).then(editor => {
+  ckEditor = editor;
+  const sync = () => {
+    emailTextarea.value = editor.getData();
+    renderPreview();
+  };
+  editor.model.document.on('change:data', sync);
+  sync();
+}).catch(err => console.error('CKEditor init failed:', err));
+
+/* ---- HTML source view toggle ---- */
+const htmlSource = document.getElementById('html-source');
+const toggleHtmlBtn = document.getElementById('toggle-html');
+let htmlMode = false;
+
+toggleHtmlBtn.addEventListener('click', () => {
+  if (!ckEditor) return;
+  const ckWrap = ckEditor.ui.view.element; // the whole editor UI element
+  if (!htmlMode) {
+    // Switch to HTML source mode.
+    htmlSource.value = ckEditor.getData();
+    ckWrap.style.display = 'none';
+    htmlSource.style.display = 'block';
+    toggleHtmlBtn.textContent = '⤺ نمایش ویرایشگر';
+    toggleHtmlBtn.classList.add('active');
+  } else {
+    // Apply edited HTML back to CKEditor.
+    ckEditor.setData(htmlSource.value);
+    emailTextarea.value = htmlSource.value;
+    htmlSource.style.display = 'none';
+    ckWrap.style.display = '';
+    toggleHtmlBtn.textContent = '‹/› کد HTML';
+    toggleHtmlBtn.classList.remove('active');
+    renderPreview();
+  }
+  htmlMode = !htmlMode;
+});
+
+// Keep preview live while editing raw HTML.
+htmlSource.addEventListener('input', () => {
+  emailTextarea.value = htmlSource.value;
+  renderPreview();
+});
+
+// Insert a variable token at the current cursor position in CKEditor.
+document.querySelectorAll('#email-fields .var-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    if (!ckEditor) return;
+    const token = '{' + '{' + chip.dataset.var + '}' + '}';
+    ckEditor.model.change(writer => {
+      const sel = ckEditor.model.document.selection;
+      const pos = sel.getFirstPosition();
+      writer.insertText(token, pos);
+      const after = pos.getShiftedBy(token.length);
+      writer.setSelection(after);
+    });
+    ckEditor.editing.view.focus();
+  });
+});
+
+// Re-render on any relevant input.
+['input', 'change'].forEach(evt => {
+  document.getElementById('template-form').addEventListener(evt, renderPreview);
+});
+
+// Fetch preview data for a domain (empty = auto-pick a complete real domain).
+function loadPreviewData(query) {
+  const label = document.getElementById('source-label');
+  label.textContent = 'در حال بارگذاری…';
+  return fetch('{{ url_for("crm.preview_context") }}?domain=' + encodeURIComponent(query || ''))
+    .then(r => r.json())
+    .then(data => {
+      previewContext = data.context;
+      if (data.source === 'domain' && data.default) {
+        label.textContent = 'داده پیش‌فرض: ' + data.domain;
+      } else if (data.source === 'domain') {
+        label.textContent = 'داده واقعی: ' + data.domain;
+      } else if (data.notfound) {
+        label.textContent = 'دامنه پیدا نشد — داده نمونه';
+      } else {
+        label.textContent = 'در حال استفاده از داده نمونه';
+      }
+      renderPreview();
+    })
+    .catch(() => { label.textContent = 'خطا در بارگذاری'; });
+}
+
+document.getElementById('load-domain-btn').addEventListener('click', () => {
+  loadPreviewData(document.getElementById('preview-domain').value.trim());
+});
+document.getElementById('preview-domain').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); loadPreviewData(e.target.value.trim()); }
+});
+
+onChannelChange();
+// Auto-load a complete default domain so preview is populated immediately.
+loadPreviewData('');
+</script>
+{% endblock %}

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% set active = 'crm' %}
+{% block title %}{{ 'ویرایش قانون' if row else 'قانون جدید' }}{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('crm.automations_list') }}">‹ بازگشت</a></p>
+<h1>{{ 'ویرایش قانون خودکار' if row else 'قانون خودکار جدید' }}</h1>
+
+<form method="post" class="panel">
+  <div class="form-row">
+    <label>نام *</label>
+    <input type="text" name="name" value="{{ row.name if row else '' }}" required style="width:100%">
+  </div>
+  <div class="form-row">
+    <label>رویداد</label>
+    <input type="text" value="ثبت دامنه جدید" disabled>
+  </div>
+  <div class="form-row">
+    <label>کانال *</label>
+    <select name="channel" id="channel-select" onchange="filterTemplates()">
+      <option value="sms" {{ 'selected' if row and row.channel=='sms' else '' }}>پیامک</option>
+      <option value="email" {{ 'selected' if row and row.channel=='email' else '' }}>ایمیل</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label>قالب *</label>
+    <select name="template_id" id="template-select" required>
+      {% for t in templates %}
+      <option value="{{ t.id }}" data-channel="{{ t.channel }}" {{ 'selected' if row and row.template_id==t.id else '' }}>{{ t.name }} ({{ t.channel }})</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="form-row" id="mobile-only-row">
+    <label><input type="checkbox" name="mobile_only" {{ 'checked' if not row or row.mobile_only else '' }}> فقط شماره موبایل (نه تلفن ثابت)</label>
+  </div>
+  <div class="form-row">
+    <label><input type="checkbox" name="is_active" {{ 'checked' if not row or row.is_active else '' }}> فعال</label>
+  </div>
+  <button class="btn" type="submit">ذخیره</button>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+function filterTemplates() {
+  const ch = document.getElementById('channel-select').value;
+  document.getElementById('mobile-only-row').style.display = ch === 'sms' ? 'block' : 'none';
+  document.querySelectorAll('#template-select option').forEach(opt => {
+    opt.hidden = opt.dataset.channel && opt.dataset.channel !== ch;
+  });
+}
+filterTemplates();
+</script>
+{% endblock %}

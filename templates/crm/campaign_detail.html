@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% set active = 'crm' %}
+{% block title %}{{ campaign.name }}{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('crm.campaigns_list') }}">‹ بازگشت به کمپین‌ها</a></p>
+<h1>{{ campaign.name }}</h1>
+
+<div class="grid" style="margin-bottom:18px">
+  <div class="card stat"><div class="num">{{ campaign.total_count|group }}</div><div class="lbl">کل</div></div>
+  <div class="card stat"><div class="num">{{ campaign.sent_count|group }}</div><div class="lbl">موفق</div></div>
+  <div class="card stat"><div class="num">{{ campaign.failed_count|group }}</div><div class="lbl">ناموفق</div></div>
+  <div class="card stat"><div class="num">{{ campaign.skipped_count|group }}</div><div class="lbl">رد شده</div></div>
+</div>
+
+<div class="panel">
+  <div class="kv">
+    <div class="k">کانال</div><div>{{ 'پیامک' if campaign.channel=='sms' else 'ایمیل' }}</div>
+    <div class="k">قالب</div><div>{{ campaign.template_name }}</div>
+    <div class="k">وضعیت</div><div>{{ campaign.status }}</div>
+    <div class="k">فقط موبایل</div><div>{{ 'بله' if campaign.mobile_only else 'خیر' }}</div>
+    <div class="k">تاریخ</div><div>{{ campaign.created_at }}</div>
+  </div>
+  {% if campaign.status != 'completed' and campaign.status != 'running' %}
+  <form method="post" action="{{ url_for('crm.campaign_send', campaign_id=campaign.id) }}" style="margin-top:14px">
+    <button class="btn" type="submit" onclick="return confirm('ارسال شروع شود؟')">شروع ارسال</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="panel" style="padding:0;overflow:auto">
+  <h2 style="padding:18px 20px 0">لاگ ارسال ({{ total_logs|group }})</h2>
+  <table>
+    <thead><tr><th>دامنه</th><th>گیرنده</th><th>نوع</th><th>وضعیت</th><th>خطا</th><th>زمان</th></tr></thead>
+    <tbody>
+      {% for l in logs %}
+      <tr>
+        <td>{{ l.domain or '—' }}</td>
+        <td class="mono">{{ l.recipient or '—' }}</td>
+        <td>{{ l.recipient_type or '—' }}</td>
+        <td><span class="badge {{ 'ok' if l.status=='sent' else ('no' if l.status=='failed' else '') }}">{{ l.status }}</span></td>
+        <td class="muted" style="font-size:12px">{{ l.error_message or '' }}</td>
+        <td class="mono">{{ l.sent_at or l.created_at }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="empty">لاگی ثبت نشده.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

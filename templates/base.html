@@ -8,17 +8,22 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
 </head>
 <body>
-  {% if session.get('auth') %}
+  {% if current_admin %}
   <header>
     <div class="bar">
       <span class="brand">🛡️ پنل اعتماد</span>
       <nav>
         <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active=='dashboard' }}">داشبورد</a>
         <a href="{{ url_for('domains') }}" class="{{ 'active' if active=='domains' }}">دامنه‌ها</a>
+        <a href="{{ url_for('crm.dashboard') }}" class="{{ 'active' if active=='crm' }}">CRM</a>
         <a href="{{ url_for('estelam') }}" class="{{ 'active' if active=='estelam' }}">استعلام زنده</a>
+        {% if current_admin.is_super %}
         <a href="{{ url_for('users') }}" class="{{ 'active' if active=='users' }}">کاربران ربات</a>
+        <a href="{{ url_for('crm.admins_list') }}" class="{{ 'active' if active=='admins' }}">مدیران</a>
+        {% endif %}
       </nav>
       <span class="spacer"></span>
+      <span class="user-chip">{{ current_admin.display_name }}</span>
       <nav><a href="{{ url_for('logout') }}" class="logout">خروج</a></nav>
     </div>
   </header>
@@ -32,5 +37,6 @@
     {% block body %}{% endblock %}
   </main>
   <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+  {% block scripts %}{% endblock %}
 </body>
 </html>

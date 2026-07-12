@@ -5,12 +5,15 @@
   <div class="panel" style="text-align:center">
     <div style="font-size:44px;margin-bottom:6px">🛡️</div>
     <h1 style="justify-content:center">پنل مدیریت اعتماد</h1>
-    <p class="muted" style="margin-top:-8px">برای ادامه رمز عبور را وارد کنید</p>
+    <p class="muted" style="margin-top:-8px">نام کاربری و رمز عبور را وارد کنید</p>
     <form method="post" style="margin-top:18px">
-      <input type="password" name="password" placeholder="رمز عبور" autofocus
+      <input type="text" name="username" placeholder="نام کاربری" autofocus
+             style="width:100%;text-align:center;margin-bottom:12px">
+      <input type="password" name="password" placeholder="رمز عبور"
              style="width:100%;text-align:center;margin-bottom:12px">
       <button class="btn" style="width:100%" type="submit">ورود</button>
     </form>
+    <p class="muted" style="font-size:12px;margin-top:14px">مدیر پیش‌فرض: admin</p>
   </div>
 </div>
 {% endblock %}

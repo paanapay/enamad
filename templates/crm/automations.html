@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% set active = 'crm' %}
+{% block title %}ارسال خودکار{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('crm.dashboard') }}">‹ بازگشت به CRM</a></p>
+<h1>قوانین ارسال خودکار</h1>
+<p class="muted">وقتی دامنه جدیدی در دیتابیس ثبت شود، پیامک یا ایمیل طبق این قوانین ارسال می‌شود.</p>
+
+<div class="tabs">
+  <a class="btn" href="{{ url_for('crm.automation_form') }}">+ قانون جدید</a>
+</div>
+
+<div class="panel" style="padding:0;overflow:auto">
+  <table>
+    <thead><tr><th>نام</th><th>رویداد</th><th>کانال</th><th>قالب</th><th>فقط موبایل</th><th>وضعیت</th><th></th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.name }}</td>
+        <td>دامنه جدید</td>
+        <td>{{ 'پیامک' if r.channel=='sms' else 'ایمیل' }}</td>
+        <td>{{ r.template_name }}</td>
+        <td>{{ 'بله' if r.mobile_only else 'خیر' }}</td>
+        <td><span class="badge {{ 'ok' if r.is_active else 'no' }}">{{ 'فعال' if r.is_active else 'غیرفعال' }}</span></td>
+        <td>
+          <a href="{{ url_for('crm.automation_form', rule_id=r.id) }}">ویرایش</a>
+          <form method="post" action="{{ url_for('crm.automation_delete', rule_id=r.id) }}" style="display:inline" onsubmit="return confirm('حذف شود؟')">
+            <button type="submit" class="btn-link danger">حذف</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="empty">قانونی تعریف نشده.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% set active = 'crm' %}
+{% block title %}کمپین‌ها{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('crm.dashboard') }}">‹ بازگشت به CRM</a></p>
+<h1>کمپین‌های ارسال</h1>
+<a class="btn" href="{{ url_for('crm.campaign_new') }}">+ کمپین جدید</a>
+
+<div class="panel" style="padding:0;overflow:auto;margin-top:16px">
+  <table>
+    <thead><tr><th>نام</th><th>کانال</th><th>قالب</th><th>تعداد</th><th>موفق</th><th>ناموفق</th><th>رد شده</th><th>وضعیت</th><th></th></tr></thead>
+    <tbody>
+      {% for c in rows %}
+      <tr>
+        <td>{{ c.name }}</td>
+        <td>{{ 'پیامک' if c.channel=='sms' else 'ایمیل' }}</td>
+        <td>{{ c.template_name }}</td>
+        <td>{{ c.total_count|group }}</td>
+        <td>{{ c.sent_count|group }}</td>
+        <td>{{ c.failed_count|group }}</td>
+        <td>{{ c.skipped_count|group }}</td>
+        <td><span class="badge {{ 'ok' if c.status=='completed' else 'no' }}">{{ c.status }}</span></td>
+        <td><a href="{{ url_for('crm.campaign_detail', campaign_id=c.id) }}">جزئیات ›</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9" class="empty">کمپینی ثبت نشده.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

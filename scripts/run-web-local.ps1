@@ -9,7 +9,9 @@ $ErrorActionPreference = "Stop"
 Set-Location (Split-Path $PSScriptRoot -Parent)
 
 if (-not (Test-Path ".env")) {
-    Copy-Item ".env.example" ".env"
+    if (Test-Path ".env.example") {
+        Copy-Item ".env.example" ".env"
+    }
 }
 
 # Minimal deps for web panel (no OCR / bot stack)
@@ -21,7 +23,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Load .env into process env (simple KEY=VALUE parser)
-foreach ($line in Get-Content ".env") {
+foreach ($line in Get-Content ".env" -ErrorAction SilentlyContinue) {
     if ($line -match '^\s*#' -or $line -notmatch '=') { continue }
     $k, $v = $line -split '=', 2
     if ($k.Trim()) { Set-Item -Path "env:$($k.Trim())" -Value $v.Trim() }
@@ -29,7 +31,7 @@ foreach ($line in Get-Content ".env") {
 
 if (-not $env:WEB_ADMIN_PASSWORD) {
     $env:WEB_ADMIN_PASSWORD = "localdev"
-    Write-Host "WEB_ADMIN_PASSWORD not set — using 'localdev'"
+    Write-Host "WEB_ADMIN_PASSWORD not set - using localdev"
 }
 
 $env:MYSQL_HOST = "127.0.0.1"
@@ -40,5 +42,5 @@ if (-not $env:MYSQL_DATABASE) { $env:MYSQL_DATABASE = "enamad" }
 $env:WEB_PORT = "8095"
 
 Write-Host "Starting web panel at http://127.0.0.1:8095/"
-Write-Host "Login password: $env:WEB_ADMIN_PASSWORD"
+Write-Host ("Login: admin / password: " + $env:WEB_ADMIN_PASSWORD)
 python webapp.py

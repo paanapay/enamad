@@ -650,6 +650,9 @@ def init_database(cfg: MySQLConfig) -> None:
         ensure_domain_detail_columns(conn)
         ensure_services_table(conn)
         ensure_bot_users_table(conn)
+        from crm_db import ensure_crm_tables
+
+        ensure_crm_tables(conn)
         conn.commit()
     finally:
         conn.close()
@@ -817,17 +820,42 @@ def save_domains(conn, rows: list[dict], scrape_run_id: int | None = None) -> in
     if not rows:
         return 0
 
+    from crm_db import enrich_contact_fields
+    from crm_service import process_new_domains
+
+    existing_keys: set[tuple[str, str]] = set()
+    keys_to_check = [
+        (str(r.get("enamad_id", "")), str(r.get("code", "")))
+        for r in rows
+        if r.get("enamad_id") and r.get("code")
+    ]
+    if keys_to_check:
+        placeholders = ",".join(["(%s,%s)"] * len(keys_to_check))
+        flat = [item for pair in keys_to_check for item in pair]
+        with conn.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT enamad_id, code FROM enamad_domains
+                WHERE (enamad_id, code) IN ({placeholders})
+                """,
+                flat,
+            )
+            for row in cursor.fetchall():
+                existing_keys.add((row["enamad_id"], row["code"]))
+
     sql = """
         INSERT INTO enamad_domains (
             enamad_id, code, domain, business_name, owner_name, business_address,
             phone, email, work_hours, province, city,
             rating, approve_date, expire_date, trustseal_url,
+            phone_type, mobile_phone, email_normalized,
             source_page, source_row, scrape_run_id
         ) VALUES (
             %(enamad_id)s, %(code)s, %(domain)s, %(business_name)s, %(owner_name)s,
             %(business_address)s, %(phone)s, %(email)s, %(work_hours)s,
             %(province)s, %(city)s,
             %(rating)s, %(approve_date)s, %(expire_date)s, %(trustseal_url)s,
+            %(phone_type)s, %(mobile_phone)s, %(email_normalized)s,
             %(source_page)s, %(source_row)s, %(scrape_run_id)s
         )
         ON DUPLICATE KEY UPDATE
@@ -844,6 +872,9 @@ def save_domains(conn, rows: list[dict], scrape_run_id: int | None = None) -> in
             approve_date = VALUES(approve_date),
             expire_date = VALUES(expire_date),
             trustseal_url = VALUES(trustseal_url),
+            phone_type = VALUES(phone_type),
+            mobile_phone = VALUES(mobile_phone),
+            email_normalized = VALUES(email_normalized),
             source_page = VALUES(source_page),
             source_row = VALUES(source_row),
             scrape_run_id = VALUES(scrape_run_id),
@@ -851,26 +882,36 @@ def save_domains(conn, rows: list[dict], scrape_run_id: int | None = None) -> in
     """
 
     payload = []
+    new_keys: list[tuple[str, str]] = []
     for row in rows:
+        enriched = enrich_contact_fields(row)
+        eid = str(enriched.get("enamad_id", ""))
+        code = str(enriched.get("code", ""))
+        key = (eid, code)
+        if key not in existing_keys and eid and code:
+            new_keys.append(key)
         payload.append(
             {
-                "enamad_id": str(row.get("enamad_id", "")),
-                "code": str(row.get("code", "")),
-                "domain": normalize_domain(str(row.get("domain", ""))),
-                "business_name": row.get("business_name") or row.get("persian_name") or None,
-                "owner_name": row.get("owner_name") or None,
-                "business_address": row.get("business_address") or None,
-                "phone": row.get("phone") or None,
-                "email": row.get("email") or None,
-                "work_hours": row.get("work_hours") or None,
-                "province": row.get("province") or None,
-                "city": row.get("city") or None,
-                "rating": int(row.get("rating") or 0),
-                "approve_date": row.get("approve_date") or None,
-                "expire_date": row.get("expire_date") or None,
-                "trustseal_url": row.get("trustseal_url") or None,
-                "source_page": row.get("source_page"),
-                "source_row": row.get("source_row"),
+                "enamad_id": eid,
+                "code": code,
+                "domain": normalize_domain(str(enriched.get("domain", ""))),
+                "business_name": enriched.get("business_name") or enriched.get("persian_name") or None,
+                "owner_name": enriched.get("owner_name") or None,
+                "business_address": enriched.get("business_address") or None,
+                "phone": enriched.get("phone") or None,
+                "email": enriched.get("email") or None,
+                "work_hours": enriched.get("work_hours") or None,
+                "province": enriched.get("province") or None,
+                "city": enriched.get("city") or None,
+                "rating": int(enriched.get("rating") or 0),
+                "approve_date": enriched.get("approve_date") or None,
+                "expire_date": enriched.get("expire_date") or None,
+                "trustseal_url": enriched.get("trustseal_url") or None,
+                "phone_type": enriched.get("phone_type"),
+                "mobile_phone": enriched.get("mobile_phone"),
+                "email_normalized": enriched.get("email_normalized"),
+                "source_page": enriched.get("source_page"),
+                "source_row": enriched.get("source_row"),
                 "scrape_run_id": scrape_run_id,
             }
         )
@@ -879,6 +920,26 @@ def save_domains(conn, rows: list[dict], scrape_run_id: int | None = None) -> in
         cursor.executemany(sql, payload)
 
     save_domain_services(conn, rows, scrape_run_id=scrape_run_id)
+
+    if new_keys:
+        placeholders = ",".join(["(%s,%s)"] * len(new_keys))
+        flat = [item for pair in new_keys for item in pair]
+        with conn.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT id FROM enamad_domains
+                WHERE (enamad_id, code) IN ({placeholders})
+                """,
+                flat,
+            )
+            new_ids = [int(r["id"]) for r in cursor.fetchall()]
+        if new_ids:
+            try:
+                process_new_domains(conn, new_ids)
+            except Exception:  # noqa: BLE001
+                import logging
+                logging.getLogger("enamad-db").exception("CRM automation failed")
+
     return len(payload)
 
 

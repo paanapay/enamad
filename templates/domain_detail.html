@@ -12,8 +12,12 @@
     <div class="k">مالک</div><div>{{ d.owner_name or '—' }}</div>
     <div class="k">استان / شهر</div><div>{{ d.province or '—' }}{% if d.city %} — {{ d.city }}{% endif %}</div>
     <div class="k">آدرس</div><div>{{ d.business_address or '—' }}</div>
-    <div class="k">تلفن</div><div class="mono">{{ d.phone or '—' }}</div>
-    <div class="k">ایمیل</div><div class="mono">{{ d.email or '—' }}</div>
+    <div class="k">تلفن (خام)</div><div class="mono">{{ d.phone or '—' }}</div>
+    <div class="k">نوع تلفن</div>
+    <div><span class="badge {{ 'ok' if d.phone_type in ('mobile','mixed') else 'no' }}">{{ d.phone_type|phone_label }}</span></div>
+    <div class="k">موبایل (نرمال)</div><div class="mono">{{ d.mobile_phone or '—' }}</div>
+    <div class="k">ایمیل (خام)</div><div class="mono">{{ d.email or '—' }}</div>
+    <div class="k">ایمیل (نرمال)</div><div class="mono">{{ d.email_normalized or '—' }}</div>
     <div class="k">ساعت کاری</div><div>{{ d.work_hours or '—' }}</div>
   </div>
 </div>
@@ -29,8 +33,9 @@
     <div>{% if d.trustseal_url %}<a href="{{ d.trustseal_url }}" target="_blank" rel="noopener">مشاهده گواهی ↗</a>{% else %}—{% endif %}</div>
     <div class="k">آخرین به‌روز</div><div class="mono">{{ d.updated_at or '—' }}</div>
   </div>
-  <div style="margin-top:16px">
-    <a class="btn" href="{{ url_for('estelam', domain=d.domain) }}">استعلام زندهٔ مجدد از enamad.ir</a>
+  <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+    <a class="btn" href="{{ url_for('estelam', domain=d.domain) }}">استعلام زندهٔ مجدد</a>
+    <a class="btn ghost" href="{{ url_for('crm.campaign_new') }}?q={{ d.domain }}">ارسال پیام CRM ›</a>
   </div>
 </div>
 
@@ -55,7 +60,7 @@
     </tbody>
   </table>
   {% else %}
-  <div class="empty">خدمتی برای این دامنه ثبت نشده. برای دریافت، استعلام زنده بگیرید.</div>
+  <div class="empty">خدمتی برای این دامنه ثبت نشده.</div>
   {% endif %}
 </div>
 {% endblock %}

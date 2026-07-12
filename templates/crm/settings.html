@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% set active = 'crm' %}
+{% block title %}تنظیمات CRM{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('crm.dashboard') }}">‹ بازگشت به CRM</a></p>
+<h1>تنظیمات پیامک و ایمیل</h1>
+
+<form method="post" class="panel">
+  <h2>کاوه‌نگار (پیامک)</h2>
+  <p class="muted">الگوها را در <a href="https://panel.kavenegar.com/client/verify/lookup" target="_blank" rel="noopener">پنل کاوه‌نگار</a> تعریف کنید و نام الگو را در قالب‌ها وارد کنید.</p>
+  <div class="form-row">
+    <label>API-KEY</label>
+    <input type="text" name="kavenegar_api_key" value="{{ settings.kavenegar_api_key or '' }}" dir="ltr" class="mono" style="width:100%">
+  </div>
+
+  <h2 style="margin-top:24px">ایمیل (SMTP)</h2>
+  <div class="form-row">
+    <label>سرور SMTP</label>
+    <input type="text" name="smtp_host" value="{{ settings.smtp_host or '' }}" dir="ltr">
+  </div>
+  <div class="form-row">
+    <label>پورت</label>
+    <input type="text" name="smtp_port" value="{{ settings.smtp_port or '587' }}" dir="ltr" style="width:120px">
+  </div>
+  <div class="form-row">
+    <label>نام کاربری</label>
+    <input type="text" name="smtp_username" value="{{ settings.smtp_username or '' }}" dir="ltr">
+  </div>
+  <div class="form-row">
+    <label>رمز عبور</label>
+    <input type="password" name="smtp_password" value="{{ settings.smtp_password or '' }}" dir="ltr">
+  </div>
+  <div class="form-row">
+    <label>آدرس فرستنده (From)</label>
+    <input type="text" name="smtp_from" value="{{ settings.smtp_from or '' }}" dir="ltr">
+  </div>
+  <div class="form-row">
+    <label><input type="checkbox" name="smtp_tls" value="on" {{ 'checked' if settings.smtp_tls != 'no' }}> استفاده از TLS</label>
+  </div>
+
+  <button class="btn" type="submit" style="margin-top:16px">ذخیره تنظیمات</button>
+</form>
+{% endblock %}

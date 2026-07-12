@@ -303,6 +303,402 @@ input:focus {
   border: 1px solid rgba(220, 38, 38, 0.25);
 }
 
+.flash.ok {
+  background: rgba(22, 163, 74, 0.08);
+  color: #15803d;
+  border: 1px solid rgba(22, 163, 74, 0.25);
+}
+
+.form-row {
+  margin-bottom: 14px;
+}
+
+.form-row label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #475569;
+}
+
+.form-row input[type="text"],
+.form-row input[type="password"],
+.form-row input[type="email"],
+.form-row select,
+.form-row textarea {
+  background-color: #fff;
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: inherit;
+  width: 100%;
+  max-width: 520px;
+}
+
+.vars-hint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.mapping-table select {
+  width: 100%;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+
+/* ===== Template form: two-column live preview ===== */
+.tpl-layout {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: 18px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .tpl-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.preview-col {
+  position: sticky;
+  top: 16px;
+}
+
+.preview-panel {
+  background: var(--panel);
+}
+
+.preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.preview-source {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+}
+
+.preview-source .source-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.preview-source input {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  font-size: 13px;
+  min-width: 0;
+}
+
+.hint {
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+/* Variable chips (clickable) */
+.var-chip {
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #bae6fd;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.var-chip:hover {
+  background: #bae6fd;
+}
+
+.var-chip .chip-token {
+  font-family: Consolas, monospace;
+  direction: ltr;
+  color: #0c4a6e;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 5px;
+  padding: 0 4px;
+}
+
+/* Phone mockup (SMS) */
+.phone-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.phone {
+  width: 100%;
+  max-width: 300px;
+  background: #ffffff;
+  border-radius: 26px;
+  padding: 12px 10px 20px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
+  border: 1px solid var(--line);
+}
+
+.phone-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 10px 10px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 10px;
+}
+
+.phone-sender {
+  font-weight: 700;
+  color: var(--text);
+  direction: ltr;
+}
+
+.phone-screen {
+  background: #eef2f7;
+  border-radius: 16px;
+  padding: 14px 10px;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sms-bubble {
+  background: #ffffff;
+  color: #0f172a;
+  padding: 10px 13px;
+  border-radius: 14px 14px 14px 4px;
+  font-size: 13px;
+  line-height: 1.9;
+  white-space: pre-wrap;
+  word-break: break-word;
+  align-self: flex-start;
+  max-width: 92%;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+/* Email preview */
+.email-card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.email-subject {
+  background: var(--panel2);
+  padding: 12px 16px;
+  font-weight: 800;
+  font-size: 15px;
+  border-bottom: 1px solid var(--line);
+}
+
+.email-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 16px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+
+.email-body {
+  padding: 16px;
+  font-size: 14px;
+  line-height: 1.9;
+  min-height: 120px;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.email-body .tok {
+  background: #e0f2fe;
+  color: #0369a1;
+  border-radius: 5px;
+  padding: 0 5px;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+/* ===== Rich text editor (email) ===== */
+.rte {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+  max-width: 100%;
+}
+
+.rte-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px;
+  background: var(--panel2);
+  border-bottom: 1px solid var(--line);
+}
+
+.rte-toolbar button {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text);
+  font-family: inherit;
+}
+
+.rte-toolbar button:hover {
+  background: #fff;
+  border-color: var(--line);
+}
+
+.rte-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--line);
+  margin: 0 4px;
+}
+
+.rte-color {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  height: 30px;
+  padding: 0 6px;
+  border-radius: 7px;
+}
+
+.rte-color:hover {
+  background: #fff;
+}
+
+.rte-color input[type="color"] {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.rte-editor {
+  min-height: 200px;
+  padding: 14px 16px;
+  font-size: 14px;
+  line-height: 2;
+  outline: none;
+  overflow-y: auto;
+  max-height: 420px;
+}
+
+.rte-editor:empty::before {
+  content: "متن ایمیل را اینجا بنویسید…";
+  color: var(--muted);
+}
+
+.rte-editor .tok {
+  background: #e0f2fe;
+  color: #0369a1;
+  border-radius: 5px;
+  padding: 1px 6px;
+  font-weight: 700;
+  font-size: 12px;
+  white-space: nowrap;
+  user-select: all;
+}
+
+.rte-editor a {
+  color: var(--accent);
+}
+
+/* ===== CKEditor 5 (email editor) sizing ===== */
+.ck-editor__editable {
+  min-height: 220px;
+  max-height: 440px;
+  font-family: inherit;
+  line-height: 2;
+}
+
+:root {
+  --ck-border-radius: 10px;
+  --ck-color-focus-border: var(--accent);
+}
+
+.editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.btn.sm {
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+
+.btn.ghost.active {
+  background: var(--accent2);
+  color: #fff;
+  border-color: var(--accent2);
+}
+
+.html-source {
+  width: 100%;
+  min-height: 260px;
+  max-height: 440px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.8;
+  color: #0f172a;
+  background: #f8fafc;
+  resize: vertical;
+}
+
+.user-chip {
+  color: #e0f2fe;
+  font-size: 13px;
+  padding: 0 10px;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+  padding: 0;
+}
+
+.btn-link.danger {
+  color: var(--red);
+}
+
 .muted {
   color: var(--muted);
 }
@@ -329,4 +725,50 @@ input:focus {
   padding: 40px;
   text-align: center;
   color: var(--muted);
+}
+
+select {
+  background-color: #fff;
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 11px 40px 11px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: inherit;
+  line-height: 1.5;
+  cursor: pointer;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%2364748b' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: left 14px center;
+  background-size: 12px 8px;
+}
+
+select:hover {
+  border-color: var(--accent2);
+}
+
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.15);
+}
+
+/* Arrow sits on the correct (left) side in RTL for these too. */
+.form-row select,
+.mapping-table select {
+  padding: 10px 38px 10px 12px;
+  background-position: left 12px center;
+}
+
+textarea {
+  background: #fff;
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 11px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: inherit;
 }

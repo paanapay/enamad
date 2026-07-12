@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% set active = 'admins' %}
+{% block title %}مدیران{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('crm.dashboard') }}">‹ بازگشت به CRM</a></p>
+<h1>مدیران پنل</h1>
+<p class="muted">فقط مدیر اصلی می‌تواند مدیران جدید بسازد و کاربران ربات را ببیند.</p>
+<a class="btn" href="{{ url_for('crm.admin_form') }}">+ مدیر جدید</a>
+
+<div class="panel" style="padding:0;overflow:auto;margin-top:16px">
+  <table>
+    <thead><tr><th>نام کاربری</th><th>نام نمایشی</th><th>نقش</th><th>وضعیت</th><th>آخرین ورود</th><th></th></tr></thead>
+    <tbody>
+      {% for a in rows %}
+      <tr>
+        <td class="mono">{{ a.username }}</td>
+        <td>{{ a.display_name or '—' }}</td>
+        <td>{{ 'مدیر اصلی' if a.role=='super_admin' else 'مدیر' }}</td>
+        <td><span class="badge {{ 'ok' if a.is_active else 'no' }}">{{ 'فعال' if a.is_active else 'غیرفعال' }}</span></td>
+        <td class="mono">{{ a.last_login or '—' }}</td>
+        <td><a href="{{ url_for('crm.admin_form', admin_id=a.id) }}">ویرایش</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

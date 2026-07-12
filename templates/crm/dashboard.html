@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% set active = 'crm' %}
+{% block title %}CRM{% endblock %}
+{% block body %}
+<h1>مدیریت ارتباط با مشتری (CRM)</h1>
+
+<div class="grid" style="margin-bottom:20px">
+  <div class="card stat"><div class="num">{{ stats.templates|group }}</div><div class="lbl">قالب فعال</div></div>
+  <div class="card stat"><div class="num">{{ stats.rules|group }}</div><div class="lbl">قانون خودکار</div></div>
+  <div class="card stat"><div class="num">{{ stats.campaigns|group }}</div><div class="lbl">کمپین</div></div>
+  <div class="card stat"><div class="num">{{ stats.mobile_domains|group }}</div><div class="lbl">دامنه با موبایل</div></div>
+  <div class="card stat"><div class="num">{{ stats.landline_domains|group }}</div><div class="lbl">دامنه با تلفن ثابت</div></div>
+  <div class="card stat"><div class="num">{{ stats.email_domains|group }}</div><div class="lbl">دامنه با ایمیل</div></div>
+</div>
+
+<div class="grid">
+  <a class="card" href="{{ url_for('crm.settings') }}" style="text-decoration:none;color:inherit">
+    <h2>⚙️ تنظیمات</h2>
+    <p class="muted">API کاوه‌نگار و SMTP ایمیل</p>
+  </a>
+  <a class="card" href="{{ url_for('crm.templates_list') }}" style="text-decoration:none;color:inherit">
+    <h2>📝 قالب‌ها</h2>
+    <p class="muted">تعریف قالب پیامک و ایمیل</p>
+  </a>
+  <a class="card" href="{{ url_for('crm.automations_list') }}" style="text-decoration:none;color:inherit">
+    <h2>🤖 ارسال خودکار</h2>
+    <p class="muted">قوانین برای دامنه‌های جدید</p>
+  </a>
+  <a class="card" href="{{ url_for('crm.campaign_new') }}" style="text-decoration:none;color:inherit">
+    <h2>📤 ارسال دستی</h2>
+    <p class="muted">انتخاب دامنه‌ها و ارسال پیام</p>
+  </a>
+  <a class="card" href="{{ url_for('crm.campaigns_list') }}" style="text-decoration:none;color:inherit">
+    <h2>📋 کمپین‌ها</h2>
+    <p class="muted">تاریخچه ارسال‌ها</p>
+  </a>
+</div>
+
+{% if campaigns %}
+<div class="panel" style="margin-top:20px">
+  <h2>آخرین کمپین‌ها</h2>
+  <table>
+    <thead><tr><th>نام</th><th>کانال</th><th>وضعیت</th><th>موفق/ناموفق</th><th></th></tr></thead>
+    <tbody>
+      {% for c in campaigns %}
+      <tr>
+        <td>{{ c.name }}</td>
+        <td>{{ 'پیامک' if c.channel=='sms' else 'ایمیل' }}</td>
+        <td><span class="badge {{ 'ok' if c.status=='completed' else 'no' }}">{{ c.status }}</span></td>
+        <td>{{ c.sent_count }}/{{ c.failed_count }}</td>
+        <td><a href="{{ url_for('crm.campaign_detail', campaign_id=c.id) }}">جزئیات ›</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

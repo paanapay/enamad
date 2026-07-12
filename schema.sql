@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS enamad_domains (
   business_address VARCHAR(1024) NULL,
   phone VARCHAR(64) NULL,
   email VARCHAR(255) NULL,
+  phone_type VARCHAR(16) NULL,
+  mobile_phone VARCHAR(16) NULL,
+  email_normalized VARCHAR(255) NULL,
   work_hours VARCHAR(128) NULL,
   province VARCHAR(128) NULL,
   city VARCHAR(128) NULL,
@@ -93,4 +96,120 @@ CREATE TABLE IF NOT EXISTS bot_users (
   last_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (platform, user_id),
   KEY idx_bot_users_last_seen (last_seen)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS admin_users (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  username VARCHAR(64) NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  display_name VARCHAR(128) NULL,
+  role VARCHAR(32) NOT NULL DEFAULT 'admin',
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_login TIMESTAMP NULL DEFAULT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_admin_username (username)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS crm_settings (
+  setting_key VARCHAR(64) NOT NULL,
+  setting_value TEXT NULL,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (setting_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS message_templates (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  name VARCHAR(128) NOT NULL,
+  channel VARCHAR(16) NOT NULL,
+  provider VARCHAR(32) NOT NULL DEFAULT 'kavenegar',
+  description TEXT NULL,
+  kavenegar_template VARCHAR(128) NULL,
+  token_mapping JSON NULL,
+  sms_preview_text TEXT NULL,
+  email_subject VARCHAR(512) NULL,
+  email_body TEXT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_templates_channel (channel),
+  KEY idx_templates_active (is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS automation_rules (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  name VARCHAR(128) NOT NULL,
+  trigger_type VARCHAR(32) NOT NULL DEFAULT 'new_domain',
+  template_id BIGINT UNSIGNED NOT NULL,
+  channel VARCHAR(16) NOT NULL,
+  mobile_only TINYINT(1) NOT NULL DEFAULT 1,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_rules_active (is_active),
+  CONSTRAINT fk_rules_template
+    FOREIGN KEY (template_id) REFERENCES message_templates (id)
+    ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS message_campaigns (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  name VARCHAR(128) NOT NULL,
+  channel VARCHAR(16) NOT NULL,
+  template_id BIGINT UNSIGNED NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'draft',
+  target_type VARCHAR(32) NOT NULL DEFAULT 'manual',
+  target_domain_ids JSON NULL,
+  mobile_only TINYINT(1) NOT NULL DEFAULT 1,
+  created_by BIGINT UNSIGNED NULL,
+  total_count INT UNSIGNED NOT NULL DEFAULT 0,
+  sent_count INT UNSIGNED NOT NULL DEFAULT 0,
+  failed_count INT UNSIGNED NOT NULL DEFAULT 0,
+  skipped_count INT UNSIGNED NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  started_at TIMESTAMP NULL DEFAULT NULL,
+  finished_at TIMESTAMP NULL DEFAULT NULL,
+  PRIMARY KEY (id),
+  KEY idx_campaigns_status (status),
+  CONSTRAINT fk_campaigns_template
+    FOREIGN KEY (template_id) REFERENCES message_templates (id)
+    ON DELETE RESTRICT,
+  CONSTRAINT fk_campaigns_admin
+    FOREIGN KEY (created_by) REFERENCES admin_users (id)
+    ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS message_logs (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  campaign_id BIGINT UNSIGNED NULL,
+  automation_rule_id BIGINT UNSIGNED NULL,
+  domain_id BIGINT UNSIGNED NULL,
+  channel VARCHAR(16) NOT NULL,
+  recipient VARCHAR(255) NULL,
+  recipient_type VARCHAR(32) NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'pending',
+  provider_message_id VARCHAR(64) NULL,
+  error_message TEXT NULL,
+  template_id BIGINT UNSIGNED NULL,
+  sent_at TIMESTAMP NULL DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_logs_campaign (campaign_id),
+  KEY idx_logs_domain (domain_id),
+  KEY idx_logs_status (status),
+  KEY idx_logs_created (created_at),
+  CONSTRAINT fk_logs_campaign
+    FOREIGN KEY (campaign_id) REFERENCES message_campaigns (id)
+    ON DELETE SET NULL,
+  CONSTRAINT fk_logs_rule
+    FOREIGN KEY (automation_rule_id) REFERENCES automation_rules (id)
+    ON DELETE SET NULL,
+  CONSTRAINT fk_logs_domain
+    FOREIGN KEY (domain_id) REFERENCES enamad_domains (id)
+    ON DELETE SET NULL,
+  CONSTRAINT fk_logs_template
+    FOREIGN KEY (template_id) REFERENCES message_templates (id)
+    ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% set active = 'admins' %}
+{% block title %}{{ 'ویرایش مدیر' if row else 'مدیر جدید' }}{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('crm.admins_list') }}">‹ بازگشت</a></p>
+<h1>{{ 'ویرایش مدیر' if row else 'مدیر جدید' }}</h1>
+
+<form method="post" class="panel">
+  {% if not row %}
+  <div class="form-row">
+    <label>نام کاربری *</label>
+    <input type="text" name="username" required dir="ltr" style="width:100%">
+  </div>
+  {% else %}
+  <div class="form-row">
+    <label>نام کاربری</label>
+    <input type="text" value="{{ row.username }}" disabled dir="ltr">
+  </div>
+  {% endif %}
+  <div class="form-row">
+    <label>نام نمایشی</label>
+    <input type="text" name="display_name" value="{{ row.display_name if row else '' }}" style="width:100%">
+  </div>
+  <div class="form-row">
+    <label>رمز عبور {{ '(خالی = بدون تغییر)' if row else '*' }}</label>
+    <input type="password" name="password" {{ 'required' if not row else '' }} style="width:100%">
+  </div>
+  <div class="form-row">
+    <label>نقش</label>
+    <select name="role">
+      <option value="admin" {{ 'selected' if row and row.role=='admin' else '' }}>مدیر</option>
+      <option value="super_admin" {{ 'selected' if row and row.role=='super_admin' else '' }}>مدیر اصلی</option>
+    </select>
+  </div>
+  {% if row %}
+  <div class="form-row">
+    <label><input type="checkbox" name="is_active" {{ 'checked' if row.is_active else '' }}> فعال</label>
+  </div>
+  {% endif %}
+  <button class="btn" type="submit">ذخیره</button>
+</form>
+{% endblock %}

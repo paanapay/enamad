@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% set active = 'crm' %}
+{% block title %}قالب‌ها{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('crm.dashboard') }}">‹ بازگشت به CRM</a></p>
+<h1>قالب‌های پیامک و ایمیل</h1>
+
+<div class="tabs">
+  <a href="{{ url_for('crm.templates_list') }}" class="{{ 'active' if not channel }}">همه</a>
+  <a href="{{ url_for('crm.templates_list', channel='sms') }}" class="{{ 'active' if channel=='sms' }}">پیامک</a>
+  <a href="{{ url_for('crm.templates_list', channel='email') }}" class="{{ 'active' if channel=='email' }}">ایمیل</a>
+  <a class="btn" href="{{ url_for('crm.template_form') }}" style="margin-right:auto">+ قالب جدید</a>
+</div>
+
+<div class="panel" style="padding:0;overflow:auto">
+  <table>
+    <thead><tr><th>نام</th><th>کانال</th><th>ارائه‌دهنده</th><th>وضعیت</th><th></th></tr></thead>
+    <tbody>
+      {% for t in rows %}
+      <tr>
+        <td>{{ t.name }}<div class="muted" style="font-size:12px">{{ t.description or '' }}</div></td>
+        <td>{{ 'پیامک' if t.channel=='sms' else 'ایمیل' }}</td>
+        <td>{{ t.provider }}</td>
+        <td><span class="badge {{ 'ok' if t.is_active else 'no' }}">{{ 'فعال' if t.is_active else 'غیرفعال' }}</span></td>
+        <td>
+          <a href="{{ url_for('crm.template_form', template_id=t.id) }}">ویرایش</a>
+          <form method="post" action="{{ url_for('crm.template_delete', template_id=t.id) }}" style="display:inline" onsubmit="return confirm('حذف شود؟')">
+            <button type="submit" class="btn-link danger">حذف</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="empty">قالبی تعریف نشده.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

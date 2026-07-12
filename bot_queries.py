@@ -6,7 +6,8 @@ DOMAIN_FIELDS = """
     id, enamad_id, code, domain, business_name, owner_name,
     business_address, phone, email, work_hours,
     province, city, rating, approve_date, expire_date,
-    trustseal_url, updated_at, created_at
+    trustseal_url, phone_type, mobile_phone, email_normalized,
+    updated_at, created_at
 """
 
 
@@ -221,6 +222,38 @@ def get_domain_by_id(conn, domain_id: int) -> dict | None:
         return cursor.fetchone()
 
 
+def get_sample_domain(conn) -> dict | None:
+    """A real domain with the most complete contact info, for previews."""
+    with conn.cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT {DOMAIN_FIELDS}
+            FROM enamad_domains
+            WHERE business_name IS NOT NULL AND business_name != ''
+              AND owner_name IS NOT NULL AND owner_name != ''
+              AND mobile_phone IS NOT NULL AND mobile_phone != ''
+              AND email_normalized IS NOT NULL AND email_normalized != ''
+            ORDER BY id ASC
+            LIMIT 1
+            """
+        )
+        row = cursor.fetchone()
+    if row:
+        return row
+    with conn.cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT {DOMAIN_FIELDS}
+            FROM enamad_domains
+            WHERE business_name IS NOT NULL AND business_name != ''
+              AND mobile_phone IS NOT NULL AND mobile_phone != ''
+            ORDER BY id ASC
+            LIMIT 1
+            """
+        )
+        return cursor.fetchone()
+
+
 def count_domains(conn) -> int:
     with conn.cursor() as cursor:
         cursor.execute("SELECT COUNT(*) AS c FROM enamad_domains")
@@ -316,6 +349,52 @@ def get_bot_users(conn, *, offset: int, limit: int) -> list[dict]:
 def count_bot_users(conn) -> int:
     with conn.cursor() as cursor:
         cursor.execute("SELECT COUNT(*) AS c FROM bot_users")
+        return int(cursor.fetchone()["c"])
+
+
+def get_domains_by_phone_type(
+    conn, phone_type: str, *, offset: int = 0, limit: int = 50
+) -> list[dict]:
+    with conn.cursor() as cursor:
+        if phone_type == "mobile":
+            cursor.execute(
+                f"""
+                SELECT {DOMAIN_FIELDS}
+                FROM enamad_domains
+                WHERE phone_type IN ('mobile', 'mixed')
+                ORDER BY updated_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                (limit, offset),
+            )
+        else:
+            cursor.execute(
+                f"""
+                SELECT {DOMAIN_FIELDS}
+                FROM enamad_domains
+                WHERE phone_type = %s
+                ORDER BY updated_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                (phone_type, limit, offset),
+            )
+        return list(cursor.fetchall())
+
+
+def count_by_phone_type(conn, phone_type: str) -> int:
+    with conn.cursor() as cursor:
+        if phone_type == "mobile":
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS c FROM enamad_domains
+                WHERE phone_type IN ('mobile', 'mixed')
+                """
+            )
+        else:
+            cursor.execute(
+                "SELECT COUNT(*) AS c FROM enamad_domains WHERE phone_type = %s",
+                (phone_type,),
+            )
         return int(cursor.fetchone()["c"])
 
 
