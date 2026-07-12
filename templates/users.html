@@ -26,8 +26,8 @@
   </table>
 </div>
 <div class="pager">
-  {% if page > 0 %}<a href="{{ url_for('users', page=page-1) }}">قبلی ›</a>{% else %}<span class="disabled">قبلی ›</span>{% endif %}
+  {% if page > 0 %}<a href="{{ url_for('users', page=page-1) }}">‹ قبلی</a>{% else %}<span class="disabled">‹ قبلی</span>{% endif %}
   <span>صفحه {{ (page+1)|group }} از {{ (pages if pages else 1)|group }}</span>
-  {% if page + 1 < pages %}<a href="{{ url_for('users', page=page+1) }}">‹ بعدی</a>{% else %}<span class="disabled">‹ بعدی</span>{% endif %}
+  {% if page + 1 < pages %}<a href="{{ url_for('users', page=page+1) }}">بعدی ›</a>{% else %}<span class="disabled">بعدی ›</span>{% endif %}
 </div>
 {% endblock %}
