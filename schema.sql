@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS scraper_state (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS bot_users (
+  platform VARCHAR(16) NOT NULL DEFAULT 'telegram',
   user_id BIGINT NOT NULL,
   username VARCHAR(255) NULL,
   first_name VARCHAR(255) NULL,
@@ -90,6 +91,6 @@ CREATE TABLE IF NOT EXISTS bot_users (
   last_action VARCHAR(64) NULL,
   first_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (user_id),
+  PRIMARY KEY (platform, user_id),
   KEY idx_bot_users_last_seen (last_seen)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

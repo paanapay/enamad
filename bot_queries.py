@@ -302,7 +302,7 @@ def get_bot_users(conn, *, offset: int, limit: int) -> list[dict]:
     with conn.cursor() as cursor:
         cursor.execute(
             """
-            SELECT user_id, username, first_name, last_name,
+            SELECT platform, user_id, username, first_name, last_name,
                    interaction_count, last_action, first_seen, last_seen
             FROM bot_users
             ORDER BY last_seen DESC

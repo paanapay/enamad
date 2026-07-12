@@ -61,6 +61,24 @@ services:
       init:
         condition: service_completed_successfully
 
+  bale-bot:
+    build: .
+    command: python bale_bot.py
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      <<: *app_env
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: "3307"
+      BALE_BOT_TOKEN: ${BALE_BOT_TOKEN:-}
+      BALE_ALLOWED_USERS: ${BALE_ALLOWED_USERS:-}
+      BALE_ADMIN_USERS: ${BALE_ADMIN_USERS:-}
+      BALE_LIVE_SEARCH: ${BALE_LIVE_SEARCH:-yes}
+      BALE_PROXY: ${BALE_PROXY:-}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
   scheduler:
     build: .
     command: python scheduler.py

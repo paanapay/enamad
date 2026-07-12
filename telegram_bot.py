@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Telegram bot for browsing Enamad domain database.
+Messenger bots (Telegram / Bale) for browsing the Enamad domain database.
 
-Setup:
+Setup (Telegram):
   1. Create a bot via @BotFather and copy the token
   2. Add [telegram] section to config.ini
   3. python telegram_bot.py
 
+Setup (Bale):
+  1. Create a bot via @botfather on Bale and copy the token
+  2. Add [bale] section to config.ini
+  3. python bale_bot.py
+
 Usage:
   python telegram_bot.py
+  python bale_bot.py
   python telegram_bot.py --config path/to/config.ini
 """
 
@@ -39,7 +45,10 @@ from telegram.ext import (
 
 import bot_queries as queries
 from bot_ui import (
+    HTML_FMT,
+    MD_FMT,
     PAGE_SIZE,
+    TextFormat,
     admin_panel_keyboard,
     admin_panel_text,
     back_home_keyboard,
@@ -47,6 +56,8 @@ from bot_ui import (
     domain_detail_text,
     domain_list_keyboard,
     domain_list_text,
+    esc,
+    get_text_format,
     help_text,
     main_menu_keyboard,
     main_menu_text,
@@ -57,6 +68,7 @@ from bot_ui import (
     search_results_text,
     search_detail_header,
     search_other_results_text,
+    set_text_format,
     stats_text,
     users_list_keyboard,
     users_list_text,
@@ -80,9 +92,54 @@ logging.basicConfig(
 )
 log = logging.getLogger("enamad-bot")
 
+BALE_API_BASE_URL = "https://tapi.bale.ai/bot"
+
 
 @dataclass(frozen=True)
-class TelegramConfig:
+class PlatformSpec:
+    name: str
+    config_section: str
+    env_token_keys: tuple[str, ...]
+    env_prefix: str
+    default_api_base_url: str | None
+    text_fmt: TextFormat
+    parse_mode: str | None
+    link_preview_disabled: bool
+    register_commands: bool
+    display_name: str
+
+
+PLATFORM_SPECS: dict[str, PlatformSpec] = {
+    "telegram": PlatformSpec(
+        name="telegram",
+        config_section="telegram",
+        env_token_keys=("BOT_TOKEN", "TELEGRAM_BOT_TOKEN"),
+        env_prefix="TELEGRAM",
+        default_api_base_url=None,
+        text_fmt=HTML_FMT,
+        **send_opts(),
+        link_preview_disabled=True,
+        register_commands=True,
+        display_name="Telegram",
+    ),
+    "bale": PlatformSpec(
+        name="bale",
+        config_section="bale",
+        env_token_keys=("BALE_BOT_TOKEN", "BOT_TOKEN"),
+        env_prefix="BALE",
+        default_api_base_url=BALE_API_BASE_URL,
+        text_fmt=MD_FMT,
+        parse_mode=None,
+        link_preview_disabled=False,
+        register_commands=False,
+        display_name="Bale",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class MessengerBotConfig:
+    platform: str
     bot_token: str
     allowed_user_ids: frozenset[int]
     admin_user_ids: frozenset[int]
@@ -91,6 +148,18 @@ class TelegramConfig:
     api_base_url: str | None
     connect_timeout: float
     read_timeout: float
+
+
+_msg_options: dict = {}
+
+
+def set_msg_options(opts: dict) -> None:
+    global _msg_options
+    _msg_options = dict(opts)
+
+
+def send_opts(**extra) -> dict:
+    return {**_msg_options, **extra}
 
 
 def _parse_ids(raw: str) -> set[int]:
@@ -110,60 +179,67 @@ def _env(*keys: str) -> str | None:
     return None
 
 
-def load_telegram_config(path: Path) -> TelegramConfig:
+def load_messenger_config(path: Path, platform: str) -> MessengerBotConfig:
+    spec = PLATFORM_SPECS[platform]
     parser = configparser.ConfigParser()
     if path.is_file():
         parser.read(path, encoding="utf-8")
 
-    env_token = _env("BOT_TOKEN", "TELEGRAM_BOT_TOKEN")
-    if not parser.has_section("telegram") and env_token is None:
+    env_token = _env(*spec.env_token_keys)
+    if not parser.has_section(spec.config_section) and env_token is None:
         raise ValueError(
-            "بخش [telegram] در config.ini نیست و BOT_TOKEN هم ست نشده.\n"
+            f"بخش [{spec.config_section}] در config.ini نیست و "
+            f"{spec.env_token_keys[0]} هم ست نشده.\n"
             "نمونه:\n"
-            "[telegram]\n"
+            f"[{spec.config_section}]\n"
             "bot_token = YOUR_TOKEN\n"
             "allowed_users = \n"
             "live_search = yes"
         )
 
-    token = env_token or parser.get("telegram", "bot_token", fallback="").strip()
+    token = env_token or parser.get(spec.config_section, "bot_token", fallback="").strip()
     if not token or token.upper() == "YOUR_TOKEN":
-        raise ValueError("bot_token تنظیم نشده (config.ini یا BOT_TOKEN).")
+        raise ValueError(
+            f"bot_token تنظیم نشده (config.ini یا {spec.env_token_keys[0]})."
+        )
 
-    raw_users = _env("TELEGRAM_ALLOWED_USERS") or parser.get(
-        "telegram", "allowed_users", fallback=""
+    raw_users = _env(f"{spec.env_prefix}_ALLOWED_USERS") or parser.get(
+        spec.config_section, "allowed_users", fallback=""
     ).strip()
     allowed = _parse_ids(raw_users)
 
-    raw_admins = _env("TELEGRAM_ADMIN_USERS", "ADMIN_USERS") or parser.get(
-        "telegram", "admin_users", fallback=""
+    raw_admins = _env(f"{spec.env_prefix}_ADMIN_USERS", "ADMIN_USERS") or parser.get(
+        spec.config_section, "admin_users", fallback=""
     ).strip()
     admins = _parse_ids(raw_admins)
 
     live = (
-        _env("TELEGRAM_LIVE_SEARCH")
-        or parser.get("telegram", "live_search", fallback="yes")
+        _env(f"{spec.env_prefix}_LIVE_SEARCH")
+        or parser.get(spec.config_section, "live_search", fallback="yes")
     ).strip().lower()
     live_search = live in ("1", "true", "yes", "on")
 
-    proxy = _env("TELEGRAM_PROXY") or parser.get("telegram", "proxy", fallback="").strip()
+    proxy = _env(f"{spec.env_prefix}_PROXY") or parser.get(
+        spec.config_section, "proxy", fallback=""
+    ).strip()
     proxy_url = proxy or None
 
-    api_base = _env("TELEGRAM_API_BASE_URL") or parser.get(
-        "telegram", "api_base_url", fallback=""
+    api_base = _env(f"{spec.env_prefix}_API_BASE_URL") or parser.get(
+        spec.config_section, "api_base_url", fallback=""
     ).strip()
-    api_base_url = api_base or None
+    api_base_url = api_base or spec.default_api_base_url
 
     connect_timeout = float(
-        _env("TELEGRAM_CONNECT_TIMEOUT")
-        or parser.getfloat("telegram", "connect_timeout", fallback=30.0)
+        _env(f"{spec.env_prefix}_CONNECT_TIMEOUT")
+        or parser.getfloat(spec.config_section, "connect_timeout", fallback=30.0)
     )
     read_timeout = float(
-        _env("TELEGRAM_READ_TIMEOUT")
-        or parser.getfloat("telegram", "read_timeout", fallback=30.0)
+        _env(f"{spec.env_prefix}_READ_TIMEOUT")
+        or parser.getfloat(spec.config_section, "read_timeout", fallback=30.0)
     )
 
-    return TelegramConfig(
+    return MessengerBotConfig(
+        platform=platform,
         bot_token=token,
         allowed_user_ids=frozenset(allowed),
         admin_user_ids=frozenset(admins),
@@ -175,7 +251,15 @@ def load_telegram_config(path: Path) -> TelegramConfig:
     )
 
 
-def is_allowed(update: Update, cfg: TelegramConfig) -> bool:
+def load_telegram_config(path: Path) -> MessengerBotConfig:
+    return load_messenger_config(path, "telegram")
+
+
+def load_bale_config(path: Path) -> MessengerBotConfig:
+    return load_messenger_config(path, "bale")
+
+
+def is_allowed(update: Update, cfg: MessengerBotConfig) -> bool:
     if not cfg.allowed_user_ids:
         return True
     user = update.effective_user
@@ -185,7 +269,7 @@ def is_allowed(update: Update, cfg: TelegramConfig) -> bool:
     return bool(user and user.id in cfg.allowed_user_ids)
 
 
-def is_admin(update: Update, cfg: TelegramConfig) -> bool:
+def is_admin(update: Update, cfg: MessengerBotConfig) -> bool:
     user = update.effective_user
     return bool(user and user.id in cfg.admin_user_ids)
 
@@ -208,11 +292,14 @@ async def track_interaction(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not app_config:
         return
 
+    bot_config = get_bot_config(context)
+
     def _write() -> None:
         try:
             with mysql_connection(app_config.mysql) as conn:
                 record_bot_user(
                     conn,
+                    platform=bot_config.platform,
                     user_id=user.id,
                     username=user.username,
                     first_name=user.first_name,
@@ -237,8 +324,8 @@ def get_app_config(context: ContextTypes.DEFAULT_TYPE):
     return context.application.bot_data["app_config"]
 
 
-def get_tg_config(context: ContextTypes.DEFAULT_TYPE) -> TelegramConfig:
-    return context.application.bot_data["tg_config"]
+def get_bot_config(context: ContextTypes.DEFAULT_TYPE) -> MessengerBotConfig:
+    return context.application.bot_data["bot_config"]
 
 
 def get_provinces_cache(context: ContextTypes.DEFAULT_TYPE) -> list[dict]:
@@ -249,24 +336,24 @@ async def send_main_menu(message, *, edit: bool = False, is_admin: bool = False)
     text = main_menu_text()
     markup = main_menu_keyboard(is_admin=is_admin)
     if edit:
-        await message.edit_text(text, reply_markup=markup, parse_mode=ParseMode.HTML)
+        await message.edit_text(text, reply_markup=markup, **send_opts())
     else:
-        await message.reply_text(text, reply_markup=markup, parse_mode=ParseMode.HTML)
+        await message.reply_text(text, reply_markup=markup, **send_opts())
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_allowed(update, get_tg_config(context)):
+    if not is_allowed(update, get_bot_config(context)):
         await deny_access(update)
         return
     context.user_data.pop("awaiting_search", None)
     if update.message:
         await send_main_menu(
-            update.message, is_admin=is_admin(update, get_tg_config(context))
+            update.message, is_admin=is_admin(update, get_bot_config(context))
         )
 
 
 async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_allowed(update, get_tg_config(context)):
+    if not is_allowed(update, get_bot_config(context)):
         await deny_access(update)
         return
     if not update.message:
@@ -275,12 +362,12 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(
         search_prompt_text(),
         reply_markup=back_home_keyboard(),
-        parse_mode=ParseMode.HTML,
+        **send_opts(),
     )
 
 
 async def cmd_latest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_allowed(update, get_tg_config(context)):
+    if not is_allowed(update, get_bot_config(context)):
         await deny_access(update)
         return
     if not update.message:
@@ -300,7 +387,7 @@ async def cmd_latest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def cmd_top(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_allowed(update, get_tg_config(context)):
+    if not is_allowed(update, get_bot_config(context)):
         await deny_access(update)
         return
     if not update.message:
@@ -320,7 +407,7 @@ async def cmd_top(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_provinces(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_allowed(update, get_tg_config(context)):
+    if not is_allowed(update, get_bot_config(context)):
         await deny_access(update)
         return
     if not update.message:
@@ -332,12 +419,12 @@ async def cmd_provinces(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(
         provinces_text(provinces),
         reply_markup=provinces_keyboard(provinces),
-        parse_mode=ParseMode.HTML,
+        **send_opts(),
     )
 
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_admin(update, get_tg_config(context)):
+    if not is_admin(update, get_bot_config(context)):
         await deny_access(update)
         return
     if not update.message:
@@ -348,13 +435,13 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         stats_text(stats),
         reply_markup=back_home_keyboard(),
-        parse_mode=ParseMode.HTML,
+        **send_opts(),
     )
 
 
 async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    tg_config = get_tg_config(context)
-    if not is_admin(update, tg_config):
+    bot_config = get_bot_config(context)
+    if not is_admin(update, bot_config):
         await deny_access(update)
         return
     if not update.message:
@@ -366,8 +453,7 @@ async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         users_list_text(rows, 0, total),
         reply_markup=users_list_keyboard(0, total),
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        **send_opts(),
     )
 
 
@@ -375,7 +461,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     query = update.callback_query
     if not query or not query.data:
         return
-    if not is_allowed(update, get_tg_config(context)):
+    if not is_allowed(update, get_bot_config(context)):
         await deny_access(update)
         return
 
@@ -386,12 +472,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if data == "m:home":
         context.user_data.pop("awaiting_search", None)
         await send_main_menu(
-            query.message, edit=True, is_admin=is_admin(update, get_tg_config(context))
+            query.message, edit=True, is_admin=is_admin(update, get_bot_config(context))
         )
         return
 
     if data == "m:admin":
-        if not is_admin(update, get_tg_config(context)):
+        if not is_admin(update, get_bot_config(context)):
             await query.answer("⛔️ فقط مدیر", show_alert=True)
             return
         with mysql_connection(app_config.mysql) as conn:
@@ -399,12 +485,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.message.edit_text(
             admin_panel_text(user_stats),
             reply_markup=admin_panel_keyboard(),
-            parse_mode=ParseMode.HTML,
+            **send_opts(),
         )
         return
 
     if data.startswith("m:users:"):
-        if not is_admin(update, get_tg_config(context)):
+        if not is_admin(update, get_bot_config(context)):
             await query.answer("⛔️ فقط مدیر", show_alert=True)
             return
         page = int(data.split(":")[-1])
@@ -415,8 +501,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.message.edit_text(
             users_list_text(rows, page, total),
             reply_markup=users_list_keyboard(page, total),
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            **send_opts(),
         )
         return
 
@@ -424,7 +509,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.message.edit_text(
             help_text(),
             reply_markup=back_home_keyboard(),
-            parse_mode=ParseMode.HTML,
+            **send_opts(),
         )
         return
 
@@ -433,12 +518,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.message.edit_text(
             search_prompt_text(),
             reply_markup=back_home_keyboard(),
-            parse_mode=ParseMode.HTML,
+            **send_opts(),
         )
         return
 
     if data == "m:stats":
-        if not is_admin(update, get_tg_config(context)):
+        if not is_admin(update, get_bot_config(context)):
             await query.answer("⛔️ فقط مدیر", show_alert=True)
             return
         with mysql_connection(app_config.mysql) as conn:
@@ -446,7 +531,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.message.edit_text(
             stats_text(stats),
             reply_markup=back_home_keyboard(),
-            parse_mode=ParseMode.HTML,
+            **send_opts(),
         )
         return
 
@@ -457,7 +542,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.message.edit_text(
             provinces_text(provinces),
             reply_markup=provinces_keyboard(provinces),
-            parse_mode=ParseMode.HTML,
+            **send_opts(),
         )
         return
 
@@ -546,7 +631,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         domain_id = int(data.split(":")[-1])
         await query.message.edit_text(
             "⏳ در حال دریافت مجوزها از enamad.ir …",
-            parse_mode=ParseMode.HTML,
+            **send_opts(),
         )
         try:
             with mysql_connection(app_config.mysql) as conn:
@@ -558,23 +643,24 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 await query.message.edit_text(
                     "❌ بروزرسانی ناموفق بود.",
                     reply_markup=back_home_keyboard(),
-                    parse_mode=ParseMode.HTML,
+                    **send_opts(),
                 )
                 return
             row, services = refreshed
-            text = domain_detail_text(row, services, header="🔄 <b>بروزرسانی شد</b>")
+            text = domain_detail_text(
+                row, services, header=f"🔄 {get_text_format().bold('بروزرسانی شد')}"
+            )
             await query.message.edit_text(
                 text,
                 reply_markup=domain_detail_keyboard(domain_id),
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
+                **send_opts(),
             )
         except Exception as exc:
             log.warning("Trust seal refresh failed for id=%s: %s", domain_id, exc)
             await query.message.edit_text(
                 f"❌ خطا در بروزرسانی: {esc(str(exc))}",
                 reply_markup=domain_detail_keyboard(domain_id),
-                parse_mode=ParseMode.HTML,
+                **send_opts(),
             )
         return
 
@@ -623,9 +709,9 @@ async def show_domain_list(
         count_fn=count_fn,
     )
     if edit:
-        await message.edit_text(text, reply_markup=markup, parse_mode=ParseMode.HTML)
+        await message.edit_text(text, reply_markup=markup, **send_opts())
     else:
-        await message.reply_text(text, reply_markup=markup, parse_mode=ParseMode.HTML)
+        await message.reply_text(text, reply_markup=markup, **send_opts())
 
 
 def _needs_enrichment(row: dict, services: list[dict]) -> bool:
@@ -652,14 +738,13 @@ async def run_enrichment(
     `render(row, services) -> str` produces the final card text.
     """
     note = (
-        f"{base_text}\n\n⏳ <i>در حال دریافت اطلاعات تکمیلی از اینماد…</i>"
+        f"{base_text}\n\n⏳ {get_text_format().italic('در حال دریافت اطلاعات تکمیلی از اینماد…')}"
     )
     try:
         await message.edit_text(
             note,
             reply_markup=markup,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            **send_opts(),
         )
     except Exception:
         pass
@@ -679,8 +764,7 @@ async def run_enrichment(
             await message.edit_text(
                 base_text,
                 reply_markup=markup,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
+                **send_opts(),
             )
         except Exception:
             pass
@@ -691,8 +775,7 @@ async def run_enrichment(
         await message.edit_text(
             render(row, services),
             reply_markup=markup,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
+            **send_opts(),
         )
     except Exception as exc:
         log.warning("Auto-enrich update failed for id=%s: %s", domain_id, exc)
@@ -707,7 +790,7 @@ async def show_domain_detail(
             await message.edit_text(
                 "❌ رکورد یافت نشد.",
                 reply_markup=back_home_keyboard(),
-                parse_mode=ParseMode.HTML,
+                **send_opts(),
             )
             return
         services = queries.get_domain_services(
@@ -718,8 +801,7 @@ async def show_domain_detail(
     await message.edit_text(
         text,
         reply_markup=domain_detail_keyboard(domain_id),
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        **send_opts(),
     )
 
     if allow_enrich and _needs_enrichment(row, services):
@@ -779,8 +861,7 @@ async def reply_search_result(
     sent = await message.reply_text(
         text,
         reply_markup=markup,
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
+        **send_opts(),
     )
     if others and len(text) >= 3900:
         compact = search_other_results_text(others, total)
@@ -788,8 +869,7 @@ async def reply_search_result(
             await message.reply_text(
                 compact,
                 reply_markup=search_results_keyboard([row, *others]),
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
+                **send_opts(),
             )
 
     # Single exact result missing contact info: enrich in the background.
@@ -822,7 +902,11 @@ async def live_search_domain(domain: str) -> dict | None:
 
 
 def format_live_result(row: dict) -> str:
-    header = "🌐 <b>نتیجه زنده از enamad.ir</b>\n<i>(در دیتابیس محلی ذخیره نشده)</i>"
+    fmt = get_text_format()
+    header = (
+        f"🌐 {fmt.bold('نتیجه زنده از enamad.ir')}\n"
+        f"{fmt.italic('(در دیتابیس محلی ذخیره نشده)')}"
+    )
     services = row.get("services") or []
     return domain_detail_text(row, services, header=header)
 
@@ -830,7 +914,7 @@ def format_live_result(row: dict) -> str:
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.message.text:
         return
-    if not is_allowed(update, get_tg_config(context)):
+    if not is_allowed(update, get_bot_config(context)):
         await deny_access(update)
         return
 
@@ -839,14 +923,14 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     app_config = get_app_config(context)
-    tg_config = get_tg_config(context)
+    bot_config = get_bot_config(context)
 
     query = normalize_domain(text)
     if len(query) < 2:
         await update.message.reply_text(
             "⚠️ عبارت جستجو خیلی کوتاه است.",
             reply_markup=main_menu_keyboard(),
-            parse_mode=ParseMode.HTML,
+            **send_opts(),
         )
         return
 
@@ -884,7 +968,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    if tg_config.live_search:
+    if bot_config.live_search:
         await update.message.reply_chat_action("typing")
         try:
             row = await live_search_domain(query)
@@ -896,15 +980,14 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text(
                 format_live_result(row),
                 reply_markup=back_home_keyboard(),
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
+                **send_opts(),
             )
             return
 
     await update.message.reply_text(
-        f"🔍 نتیجه‌ای برای <code>{query}</code> پیدا نشد.",
+        f"🔍 نتیجه‌ای برای {get_text_format().code(query)} پیدا نشد.",
         reply_markup=main_menu_keyboard(),
-        parse_mode=ParseMode.HTML,
+        **send_opts(),
     )
 
 
@@ -941,6 +1024,9 @@ async def _post_init(application: Application) -> None:
         except Exception as exc:
             log.warning("Could not ensure bot_users table: %s", exc)
 
+    if not application.bot_data.get("register_commands"):
+        return
+
     try:
         await application.bot.set_my_commands(BOT_COMMANDS)
         await application.bot.set_my_description(BOT_DESCRIPTION)
@@ -950,39 +1036,51 @@ async def _post_init(application: Application) -> None:
         log.warning("Could not set bot commands/description: %s", exc)
 
 
-def build_application(config_path: Path) -> Application:
+def build_application(config_path: Path, *, platform: str = "telegram") -> Application:
+    spec = PLATFORM_SPECS[platform]
     app_config = load_config(config_path)
-    tg_config = load_telegram_config(config_path)
+    bot_config = load_messenger_config(config_path, platform)
+
+    set_text_format(spec.text_fmt)
+    msg_options: dict = {}
+    if spec.parse_mode:
+        msg_options["parse_mode"] = spec.parse_mode
+    if spec.link_preview_disabled:
+        msg_options["disable_web_page_preview"] = True
+    set_msg_options(msg_options)
 
     request = HTTPXRequest(
-        connect_timeout=tg_config.connect_timeout,
-        read_timeout=tg_config.read_timeout,
-        write_timeout=tg_config.read_timeout,
-        pool_timeout=tg_config.connect_timeout,
-        proxy=tg_config.proxy_url,
+        connect_timeout=bot_config.connect_timeout,
+        read_timeout=bot_config.read_timeout,
+        write_timeout=bot_config.read_timeout,
+        pool_timeout=bot_config.connect_timeout,
+        proxy=bot_config.proxy_url,
     )
     polling_request = HTTPXRequest(
-        connect_timeout=tg_config.connect_timeout,
-        read_timeout=tg_config.read_timeout,
-        write_timeout=tg_config.read_timeout,
-        pool_timeout=tg_config.connect_timeout,
-        proxy=tg_config.proxy_url,
+        connect_timeout=bot_config.connect_timeout,
+        read_timeout=bot_config.read_timeout,
+        write_timeout=bot_config.read_timeout,
+        pool_timeout=bot_config.connect_timeout,
+        proxy=bot_config.proxy_url,
     )
 
     builder = (
         Application.builder()
-        .token(tg_config.bot_token)
+        .token(bot_config.bot_token)
         .request(request)
         .get_updates_request(polling_request)
         .post_init(_post_init)
     )
-    if tg_config.api_base_url:
-        builder = builder.base_url(tg_config.api_base_url)
-        log.info("Using custom Telegram API: %s", tg_config.api_base_url)
+    if bot_config.api_base_url:
+        builder = builder.base_url(bot_config.api_base_url)
+        log.info("Using custom %s API: %s", spec.display_name, bot_config.api_base_url)
 
     application = builder.build()
     application.bot_data["app_config"] = app_config
-    application.bot_data["tg_config"] = tg_config
+    application.bot_data["bot_config"] = bot_config
+    application.bot_data["text_fmt"] = spec.text_fmt
+    application.bot_data["msg_options"] = msg_options
+    application.bot_data["register_commands"] = spec.register_commands
     application.bot_data["provinces_cache"] = []
 
     application.add_handler(TypeHandler(Update, track_interaction), group=-1)
@@ -997,14 +1095,15 @@ def build_application(config_path: Path) -> Application:
     application.add_handler(CallbackQueryHandler(on_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
-    if tg_config.proxy_url:
-        log.info("Telegram proxy enabled: %s", tg_config.proxy_url.split("@")[-1])
+    if bot_config.proxy_url:
+        log.info("%s proxy enabled: %s", spec.display_name, bot_config.proxy_url.split("@")[-1])
 
     return application
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Enamad Telegram bot")
+def parse_args(*, platform: str = "telegram") -> argparse.Namespace:
+    spec = PLATFORM_SPECS[platform]
+    parser = argparse.ArgumentParser(description=f"Enamad {spec.display_name} bot")
     parser.add_argument(
         "--config",
         default=str(DEFAULT_CONFIG),
@@ -1013,19 +1112,20 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
+def run_bot(*, platform: str = "telegram") -> int:
+    spec = PLATFORM_SPECS[platform]
+    args = parse_args(platform=platform)
     config_path = Path(args.config)
     if not config_path.is_absolute():
         config_path = SCRIPT_DIR / config_path
 
     try:
-        app = build_application(config_path)
+        app = build_application(config_path, platform=platform)
     except (FileNotFoundError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    log.info("Enamad Telegram bot started (polling mode — no webhook needed).")
+    log.info("Enamad %s bot started (polling mode — no webhook needed).", spec.display_name)
     try:
         app.run_polling(
             allowed_updates=Update.ALL_TYPES,
@@ -1033,7 +1133,9 @@ def main() -> int:
             drop_pending_updates=True,
         )
     except Exception as exc:
-        if "TimedOut" in type(exc).__name__ or "Connect" in str(exc):
+        if platform == "telegram" and (
+            "TimedOut" in type(exc).__name__ or "Connect" in str(exc)
+        ):
             print(
                 "\n❌ اتصال به Telegram API برقرار نشد (Timed out).\n"
                 "   این مشکل webhook نیست — سرور api.telegram.org از شبکه شما در دسترس نیست.\n\n"
@@ -1046,8 +1148,23 @@ def main() -> int:
                 "   Webhook لازم نیست — polling روی localhost کافی است.\n",
                 file=sys.stderr,
             )
+        elif platform == "bale" and (
+            "TimedOut" in type(exc).__name__ or "Connect" in str(exc)
+        ):
+            print(
+                "\n❌ اتصال به Bale API برقرار نشد.\n"
+                "   آدرس API: https://tapi.bale.ai\n\n"
+                "   راه‌حل‌ها:\n"
+                "   1. اتصال اینترنت را بررسی کنید\n"
+                "   2. connect_timeout = 60 در بخش [bale]\n",
+                file=sys.stderr,
+            )
         raise
     return 0
+
+
+def main() -> int:
+    return run_bot(platform="telegram")
 
 
 if __name__ == "__main__":

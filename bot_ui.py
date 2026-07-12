@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import html
+import re
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -9,10 +11,63 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 PAGE_SIZE = 10
 
 
+@dataclass(frozen=True)
+class TextFormat:
+    """Message text formatting — HTML for Telegram, Markdown for Bale."""
+
+    name: str
+
+    def esc(self, value: Any) -> str:
+        if value is None:
+            return ""
+        text = str(value)
+        if self.name == "html":
+            return html.escape(text)
+        return re.sub(r"([\\*_\[\]()])", r"\\\1", text)
+
+    def bold(self, value: Any) -> str:
+        text = self.esc(value)
+        if self.name == "html":
+            return f"<b>{text}</b>"
+        return f" ** {text} ** "
+
+    def code(self, value: Any) -> str:
+        text = self.esc(value)
+        if self.name == "html":
+            return f"<code>{text}</code>"
+        return text
+
+    def italic(self, value: Any) -> str:
+        text = self.esc(value)
+        if self.name == "html":
+            return f"<i>{text}</i>"
+        return f" _ {text} _ "
+
+    def link(self, label: Any, url: str) -> str:
+        text = self.esc(label)
+        safe_url = html.escape(url, quote=True) if self.name == "html" else url
+        if self.name == "html":
+            return f'<a href="{safe_url}">{text}</a>'
+        return f"[{text}]({safe_url})"
+
+
+HTML_FMT = TextFormat("html")
+MD_FMT = TextFormat("markdown")
+
+_fmt: TextFormat = HTML_FMT
+
+
+def set_text_format(fmt: TextFormat) -> None:
+    global _fmt
+    _fmt = fmt
+
+
+def get_text_format() -> TextFormat:
+    return _fmt
+
+
 def esc(value: Any) -> str:
-    if value is None:
-        return ""
-    return html.escape(str(value))
+    return _fmt.esc(value)
 
 
 def stars(rating: int) -> str:
@@ -29,8 +84,9 @@ def fmt_date(value: Any) -> str:
 
 
 def main_menu_text() -> str:
+    f = _fmt
     return (
-        "🛡 <b>ربات اینماد</b>\n\n"
+        f"🛡 {f.bold('ربات اینماد')}\n\n"
         "جستجو و مرور دامنه‌های دارای نماد اعتماد الکترونیکی\n\n"
         "یک گزینه از منو انتخاب کنید 👇"
     )
@@ -61,12 +117,13 @@ def main_menu_keyboard(*, is_admin: bool = False) -> InlineKeyboardMarkup:
 
 
 def admin_panel_text(user_stats: dict) -> str:
+    f = _fmt
     return (
-        "🛠 <b>پنل مدیریت</b>\n\n"
-        f"👥 کل کاربران: <b>{user_stats.get('total', 0):,}</b>\n"
-        f"🟢 فعال ۲۴ ساعت اخیر: <b>{user_stats.get('active_1d', 0):,}</b>\n"
-        f"📅 فعال ۷ روز اخیر: <b>{user_stats.get('active_7d', 0):,}</b>\n"
-        f"💬 مجموع تعاملات: <b>{user_stats.get('interactions', 0):,}</b>\n\n"
+        f"🛠 {f.bold('پنل مدیریت')}\n\n"
+        f"👥 کل کاربران: {f.bold(f'{user_stats.get('total', 0):,}')}\n"
+        f"🟢 فعال ۲۴ ساعت اخیر: {f.bold(f'{user_stats.get('active_1d', 0):,}')}\n"
+        f"📅 فعال ۷ روز اخیر: {f.bold(f'{user_stats.get('active_7d', 0):,}')}\n"
+        f"💬 مجموع تعاملات: {f.bold(f'{user_stats.get('interactions', 0):,}')}\n\n"
         "یک گزینه را انتخاب کنید 👇"
     )
 
@@ -86,14 +143,23 @@ def _user_display_name(row: dict) -> str:
     return name or "—"
 
 
+def _platform_label(platform: str | None) -> str:
+    if platform == "bale":
+        return "بله"
+    if platform == "telegram":
+        return "تلگرام"
+    return platform or "—"
+
+
 def users_list_text(rows: list[dict], page: int, total: int) -> str:
+    f = _fmt
     pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
     header = (
-        "👥 <b>کاربران ربات</b>\n"
+        f"👥 {f.bold('کاربران ربات')}\n"
         f"صفحه {page + 1} از {pages}  •  {total:,} کاربر\n"
     )
     if not rows:
-        return header + "\n<i>هنوز کاربری ثبت نشده.</i>"
+        return header + f"\n{f.italic('هنوز کاربری ثبت نشده.')}"
 
     parts = [header, ""]
     for index, row in enumerate(rows, start=1):
@@ -101,9 +167,11 @@ def users_list_text(rows: list[dict], page: int, total: int) -> str:
         name = esc(_user_display_name(row))
         username = row.get("username")
         uname = f" (@{esc(username)})" if username else ""
+        platform = row.get("platform")
+        platform_tag = f" · {esc(_platform_label(platform))}" if platform else ""
         line = (
-            f"<b>{num}.</b> {name}{uname}\n"
-            f"🆔 <code>{row.get('user_id')}</code> · "
+            f"{f.bold(f'{num}.')} {name}{uname}\n"
+            f"🆔 {f.code(row.get('user_id'))}{platform_tag} · "
             f"💬 {row.get('interaction_count', 0):,} · "
             f"🕐 {fmt_date(row.get('last_seen'))}"
         )
@@ -138,33 +206,36 @@ def back_home_keyboard() -> InlineKeyboardMarkup:
 
 
 def search_prompt_text() -> str:
+    f = _fmt
     return (
-        "🔍 <b>جستجوی دامنه</b>\n\n"
+        f"🔍 {f.bold('جستجوی دامنه')}\n\n"
         "نام دامنه یا عنوان کسب‌وکار را بنویسید:\n"
-        "<i>مثال: digikala.com یا دیجی‌کالا</i>\n\n"
+        f"{f.italic('مثال: digikala.com یا دیجی‌کالا')}\n\n"
         "برای لغو، /start را بزنید."
     )
 
 
 def help_text() -> str:
+    f = _fmt
     return (
-        "❓ <b>راهنما</b>\n\n"
-        "🔍 <b>جستجو</b> — دامنه، نام فارسی یا صاحب امتیاز\n"
-        "🆕 <b>تازه‌ترین‌ها</b> — بر اساس ترتیب سایت اینماد\n"
-        "⭐ <b>امتیاز بالا</b> — دامنه‌های ۴ و ۵ ستاره\n"
-        "🗺 <b>استان</b> — فیلتر بر اساس استان\n\n"
+        f"❓ {f.bold('راهنما')}\n\n"
+        f"🔍 {f.bold('جستجو')} — دامنه، نام فارسی یا صاحب امتیاز\n"
+        f"🆕 {f.bold('تازه‌ترین‌ها')} — بر اساس ترتیب سایت اینماد\n"
+        f"⭐ {f.bold('امتیاز بالا')} — دامنه‌های ۴ و ۵ ستاره\n"
+        f"🗺 {f.bold('استان')} — فیلتر بر اساس استان\n\n"
         "💡 اگر دامنه در دیتابیس نبود، جستجوی زنده از enamad.ir هم انجام می‌شود."
     )
 
 
 def stats_text(stats: dict) -> str:
+    f = _fmt
     scrape = stats.get("scrape") or {}
     last_run = stats.get("last_run")
     last_major = stats.get("last_major_run")
     lines = [
-        "📊 <b>آمار دیتابیس</b>",
-        f"📦 کل دامنه‌ها: <b>{stats.get('total', 0):,}</b>",
-        f"⭐ دارای امتیاز: <b>{stats.get('rated', 0):,}</b>",
+        f"📊 {f.bold('آمار دیتابیس')}",
+        f"📦 کل دامنه‌ها: {f.bold(f'{stats.get('total', 0):,}')}",
+        f"⭐ دارای امتیاز: {f.bold(f'{stats.get('rated', 0):,}')}",
     ]
 
     total_pages = scrape.get("total_pages")
@@ -175,15 +246,15 @@ def stats_text(stats: dict) -> str:
         total_pages_int = int(total_pages)
         pct = effective_last * 100 // max(1, total_pages_int)
         lines.append(
-            f"📄 پیشرفت اسکرپ: <b>{effective_last:,}</b> / {total_pages_int:,} ({pct}%)"
+            f"📄 پیشرفت اسکرپ: {f.bold(f'{effective_last:,}')} / {total_pages_int:,} ({pct}%)"
         )
         if distinct_pages and distinct_pages != effective_last:
             cover = distinct_pages * 100 // max(1, total_pages_int)
             lines.append(
-                f"📑 صفحات پوشش‌داده‌شده در DB: <b>{distinct_pages:,}</b> ({cover}%)"
+                f"📑 صفحات پوشش‌داده‌شده در DB: {f.bold(f'{distinct_pages:,}')} ({cover}%)"
             )
     elif effective_last:
-        lines.append(f"📄 آخرین صفحه اسکرپ‌شده: <b>{effective_last:,}</b>")
+        lines.append(f"📄 آخرین صفحه اسکرپ‌شده: {f.bold(f'{effective_last:,}')}")
 
     if stats.get("last_update"):
         lines.append(f"🕐 آخرین به‌روزرسانی: {fmt_date(stats['last_update'])}")
@@ -193,7 +264,7 @@ def stats_text(stats: dict) -> str:
         lines.extend(
             [
                 "",
-                "<b>آخرین اجرای اسکرپر</b>",
+                f.bold("آخرین اجرای اسکرپر"),
                 f"• وضعیت: {esc(display_run.get('status', '—'))}",
                 f"• صفحات: {display_run.get('pages_fetched', 0):,}",
                 f"• رکوردها: {display_run.get('records_saved', 0):,}",
@@ -211,9 +282,11 @@ def stats_text(stats: dict) -> str:
         lines.extend(
             [
                 "",
-                f"<i>آخرین اجرای کوچک: {last_run.get('pages_fetched', 0):,} صفحه، "
-                f"{last_run.get('records_saved', 0):,} رکورد "
-                f"({fmt_date(last_run.get('finished_at'))})</i>",
+                f.italic(
+                    f"آخرین اجرای کوچک: {last_run.get('pages_fetched', 0):,} صفحه، "
+                    f"{last_run.get('records_saved', 0):,} رکورد "
+                    f"({fmt_date(last_run.get('finished_at'))})"
+                ),
             ]
         )
 
@@ -221,6 +294,7 @@ def stats_text(stats: dict) -> str:
 
 
 def domain_card(row: dict, *, compact: bool = False) -> str:
+    f = _fmt
     domain = esc(row.get("domain") or "—")
     name = esc(row.get("business_name") or "—")
     rating = int(row.get("rating") or 0)
@@ -229,13 +303,13 @@ def domain_card(row: dict, *, compact: bool = False) -> str:
 
     if compact:
         return (
-            f"🌐 <code>{domain}</code>\n"
+            f"🌐 {f.code(domain)}\n"
             f"🏪 {name}\n"
             f"{stars(rating)}  📍 {province} / {city}"
         )
 
     lines = [
-        f"🌐 <b>{domain}</b>",
+        f"🌐 {f.bold(domain)}",
         f"🏪 {name}",
         f"{stars(rating)} ({rating}/5)",
         f"📍 {province} — {city}",
@@ -245,7 +319,7 @@ def domain_card(row: dict, *, compact: bool = False) -> str:
     if row.get("business_address"):
         lines.append(f"📫 {esc(row['business_address'])}")
     if row.get("phone"):
-        lines.append(f"📞 <code>{esc(row['phone'])}</code>")
+        lines.append(f"📞 {f.code(row['phone'])}")
     if row.get("email"):
         lines.append(f"✉️ {esc(row['email'])}")
     if row.get("work_hours"):
@@ -255,56 +329,59 @@ def domain_card(row: dict, *, compact: bool = False) -> str:
     if row.get("expire_date"):
         lines.append(f"⏳ انقضا: {esc(row['expire_date'])}")
     if row.get("trustseal_url"):
-        lines.append(f'🔗 <a href="{esc(row["trustseal_url"])}">نماد اعتماد</a>')
+        lines.append(f"🔗 {f.link('نماد اعتماد', row['trustseal_url'])}")
     if row.get("updated_at"):
         lines.append(f"🕐 به‌روز: {fmt_date(row.get('updated_at'))}")
     return "\n".join(lines)
 
 
 def domain_detail_text(row: dict, services: list[dict], *, header: str | None = None) -> str:
+    f = _fmt
     parts: list[str] = []
     if header:
         parts.append(header)
     parts.append(domain_card(row, compact=False))
     if services:
         parts.append("")
-        parts.append("<b>📋 خدمات / مجوزها</b>")
+        parts.append(f.bold("📋 خدمات / مجوزها"))
         for index, service in enumerate(services[:12], start=1):
             title = esc(service.get("service_title") or "—")
             status = esc(service.get("status") or "")
             issuer = esc(service.get("license_issuer") or "")
             line = f"{index}. {title}"
             if status:
-                line += f" <i>[{status}]</i>"
+                line += f" {f.italic(f'[{status}]')}"
             if issuer:
                 line += f"\n   ↳ {issuer}"
             parts.append(line)
         if len(services) > 12:
-            parts.append(f"<i>+ {len(services) - 12} مورد دیگر</i>")
+            parts.append(f.italic(f"+ {len(services) - 12} مورد دیگر"))
     return "\n".join(parts)
 
 
 def search_detail_header(query: str, *, total: int, showing_best: bool = False) -> str:
-    title = f"🔍 <b>جستجو:</b> <code>{esc(query)}</code>"
+    f = _fmt
+    title = f"🔍 {f.bold('جستجو:')} {f.code(query)}"
     if showing_best and total > 1:
-        return f"{title}\n<i>بهترین نتیجه از {total:,} مورد:</i>"
+        return f"{title}\n{f.italic(f'بهترین نتیجه از {total:,} مورد:')}"
     return title
 
 
 def search_other_results_text(rows: list[dict], total: int) -> str:
+    f = _fmt
     if not rows:
         return ""
     lines = [
         "",
-        f"<b>نتایج مشابه دیگر</b> ({total - 1:,} مورد)",
+        f"{f.bold('نتایج مشابه دیگر')} ({total - 1:,} مورد)",
         "",
     ]
     for index, row in enumerate(rows, start=2):
-        lines.append(f"<b>{index}.</b>")
+        lines.append(f.bold(f"{index}."))
         lines.append(domain_card(row, compact=True))
         lines.append("")
     if total > len(rows) + 1:
-        lines.append(f"<i>+ {total - len(rows) - 1:,} نتیجه دیگر…</i>")
+        lines.append(f.italic(f"+ {total - len(rows) - 1:,} نتیجه دیگر…"))
     return "\n".join(lines).strip()
 
 
@@ -318,18 +395,20 @@ def list_header(title: str, page: int, total: int) -> str:
 
 def domain_list_line(num: int, row: dict) -> str:
     """Compact list entry: number + name + domain + approve date."""
+    f = _fmt
     domain = esc(row.get("domain") or "—")
     name = esc(row.get("business_name") or "—")
     approve = row.get("approve_date")
-    second = f"🌐 <code>{domain}</code>"
+    second = f"🌐 {f.code(domain)}"
     if approve:
         second += f" · 📅 {esc(approve)}"
-    return f"<b>{num}.</b> {name}\n{second}"
+    return f"{f.bold(f'{num}.')} {name}\n{second}"
 
 
 def domain_list_text(title: str, rows: list[dict], page: int, total: int) -> str:
+    f = _fmt
     if not rows:
-        return f"{title}\n\n<i>موردی یافت نشد.</i>"
+        return f"{title}\n\n{f.italic('موردی یافت نشد.')}"
 
     parts = [list_header(title, page, total), ""]
     for index, row in enumerate(rows, start=1):
@@ -340,20 +419,22 @@ def domain_list_text(title: str, rows: list[dict], page: int, total: int) -> str
 
 
 def search_results_text(query: str, rows: list[dict], total: int) -> str:
-    title = f"🔍 نتایج برای <code>{esc(query)}</code>"
+    f = _fmt
+    title = f"🔍 نتایج برای {f.code(query)}"
     if not rows:
-        return f"{title}\n\n<i>در دیتابیس چیزی پیدا نشد.</i>"
+        return f"{title}\n\n{f.italic('در دیتابیس چیزی پیدا نشد.')}"
     text = list_header(title, 0, total)
     for index, row in enumerate(rows, start=1):
-        text += f"\n<b>{index}.</b>\n{domain_card(row, compact=True)}\n"
+        text += f"\n{f.bold(f'{index}.')}\n{domain_card(row, compact=True)}\n"
     if total > len(rows):
-        text += f"\n<i>نمایش {len(rows)} از {total:,} نتیجه</i>"
+        text += f"\n{f.italic(f'نمایش {len(rows)} از {total:,} نتیجه')}"
     return text
 
 
 def provinces_text(provinces: list[dict]) -> str:
+    f = _fmt
     lines = [
-        "🗺 <b>انتخاب استان</b>",
+        f"🗺 {f.bold('انتخاب استان')}",
         "یک استان را انتخاب کنید:",
     ]
     return "\n".join(lines)

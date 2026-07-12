@@ -1,6 +1,6 @@
 # Enamad Scraper — Full Documentation
 
-Detailed reference for the scraper, updater, scheduler, Telegram bot, and Docker
+Detailed reference for the scraper, updater, scheduler, Telegram/Bale bots, and Docker
 setup. For a quick start, see [README.md](README.md).
 
 ---
@@ -11,6 +11,7 @@ setup. For a quick start, see [README.md](README.md).
 enamad/
 ├── extract_enamad.py   # Scraper + updater CLI
 ├── telegram_bot.py     # Telegram bot
+├── bale_bot.py           # Bale bot (same logic, Bale API)
 ├── scheduler.py        # Recurring update/refresh scheduler (APScheduler)
 ├── db.py               # MySQL helpers (config via file or ENV)
 ├── console_ui.py       # Live console / parallel dashboard
@@ -50,6 +51,16 @@ allowed_users =      ; comma-separated user IDs (empty = public bot)
 admin_users =        ; admin user IDs: user list + admin panel
 live_search = yes    ; query enamad.ir live if a domain isn't in the DB
 proxy =              ; http://host:port or socks5://host:port (leave empty if not needed)
+connect_timeout = 30
+read_timeout = 30
+
+[bale]
+bot_token = 123456:ABC...
+allowed_users =
+admin_users =
+live_search = yes
+proxy =
+api_base_url = https://tapi.bale.ai/bot
 connect_timeout = 30
 read_timeout = 30
 
@@ -195,6 +206,7 @@ docker compose up -d --build
 | `mysql` | Database with a persistent volume (`mysql_data`) |
 | `init` | One-shot: creates the schema, then exits |
 | `bot` | Telegram bot (always on) |
+| `bale-bot` | Bale bot (always on) |
 | `scheduler` | Recurring `--update` + `--refresh-stale` |
 
 Run the initial full scrape once:
@@ -269,7 +281,22 @@ docker compose exec mysql mysqladmin ping -h 127.0.0.1 -uroot -p
 
 On startup the bot auto-registers its menu commands and description on Telegram.
 
-### Features
+## Bale bot
+
+The Bale bot uses the same code and database as the Telegram bot. Bale's API is
+based on the Telegram Bot API; this project uses `python-telegram-bot` with
+`api_base_url = https://tapi.bale.ai/bot`.
+
+### Setup
+
+1. Create a bot with [@botfather](https://ble.ir/botfather) on Bale and copy the token.
+2. Put it in `config.ini` (`[bale] bot_token = ...`) or `BALE_BOT_TOKEN` env var.
+3. Run `python bale_bot.py`.
+
+Bale messages use **Markdown** formatting (not HTML). Menu command registration is
+skipped on Bale (not supported by the API).
+
+### Bot features (both platforms)
 
 | Feature | Description |
 |---------|-------------|
@@ -283,9 +310,9 @@ Send any domain name as plain text to search directly.
 
 ### Users & admin
 
-Every interaction is recorded in the `bot_users` table (id, name, username,
-interaction count, first/last seen). Set `admin_users` to your Telegram numeric
-ID (get it from [@userinfobot](https://t.me/userinfobot)).
+Every interaction is recorded in the `bot_users` table (platform, id, name,
+username, interaction count, first/last seen). Set `admin_users` to your numeric
+user ID on the respective platform.
 
 | Role | Access |
 |------|--------|
@@ -335,7 +362,7 @@ Duplicates are upserted (`ON DUPLICATE KEY UPDATE`).
 - `enamad_domain_services` — licenses/services per domain
 - `scrape_runs` — scrape session log
 - `scraper_state` — progress (`last_completed_page`, `total_pages`, per-worker)
-- `bot_users` — Telegram users and interaction counts
+- `bot_users` — bot users per platform (telegram / bale) and interaction counts
 
 ### Example queries
 

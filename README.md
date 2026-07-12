@@ -1,8 +1,8 @@
 # Enamad Domain Scraper
 
 Scrapes the official Enamad domain-holder list (`enamad.ir/DomainListForMIMT`)
-into **MySQL**, solving captchas automatically with `ddddocr`. Includes a
-**Telegram bot** to browse the data and a **scheduler** to keep it fresh.
+into **MySQL**, solving captchas automatically with `ddddocr`. Includes
+**Telegram** and **Bale** bots to browse the data and a **scheduler** to keep it fresh.
 
 Each list page returns 30 domains and needs a fresh captcha. Domain *details*
 (address, phone, licenses…) come from the public trust-seal page and need **no
@@ -37,8 +37,10 @@ python extract_enamad.py --init-db
 # 4. scrape the full list (parallel, resumable)
 python extract_enamad.py --all --workers 4 --chunk-pages 10
 
-# 5. run the Telegram bot
+# 5. run a bot
 python telegram_bot.py
+# or Bale:
+python bale_bot.py
 ```
 
 `--all` auto-resumes after interruptions — just run it again.
@@ -85,6 +87,7 @@ docker compose run --rm bot python extract_enamad.py --all --workers 4 --chunk-p
 | `mysql` | Database with a persistent volume |
 | `init` | One-shot: creates the schema, then exits |
 | `bot` | Telegram bot (long-polling, always on) |
+| `bale-bot` | Bale bot (long-polling, always on) |
 | `scheduler` | Recurring `--update` + `--refresh-stale` |
 
 Config inside containers comes from environment variables (see `.env.example`),
@@ -92,14 +95,19 @@ so no `config.ini` is required. More detail in [DOCS.md](DOCS.md).
 
 ---
 
-## Telegram bot
+## Bots (Telegram & Bale)
+
+Both bots share the same features:
 
 - Search by domain / business name / owner (local DB + optional live lookup)
 - Browse latest domains (same order as the site), top-rated, by province
 - Admins get a user list + admin panel; set `admin_users` in config
 
-Uses long polling — no public URL or webhook needed, works behind a proxy.
-Setup and admin details in [DOCS.md](DOCS.md).
+**Telegram:** `python telegram_bot.py` — config in `[telegram]`, token from @BotFather.
+
+**Bale:** `python bale_bot.py` — config in `[bale]`, token from [@botfather](https://ble.ir/botfather) on Bale. Uses the [Bale Bot API](https://docs.bale.ai/) (`https://tapi.bale.ai`) and usually needs no proxy inside Iran.
+
+Uses long polling — no public URL or webhook needed. Setup details in [DOCS.md](DOCS.md).
 
 ---
 

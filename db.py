@@ -708,6 +708,7 @@ def ensure_bot_users_table(conn) -> None:
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS bot_users (
+              platform VARCHAR(16) NOT NULL DEFAULT 'telegram',
               user_id BIGINT NOT NULL,
               username VARCHAR(255) NULL,
               first_name VARCHAR(255) NULL,
@@ -716,29 +717,50 @@ def ensure_bot_users_table(conn) -> None:
               last_action VARCHAR(64) NULL,
               first_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
               last_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-              PRIMARY KEY (user_id),
+              PRIMARY KEY (platform, user_id),
               KEY idx_bot_users_last_seen (last_seen)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """
         )
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'bot_users'
+              AND COLUMN_NAME = 'platform'
+            """
+        )
+        if int((cursor.fetchone() or {}).get("c") or 0) == 0:
+            cursor.execute(
+                """
+                ALTER TABLE bot_users
+                  ADD COLUMN platform VARCHAR(16) NOT NULL DEFAULT 'telegram' FIRST
+                """
+            )
+            cursor.execute("ALTER TABLE bot_users DROP PRIMARY KEY")
+            cursor.execute(
+                "ALTER TABLE bot_users ADD PRIMARY KEY (platform, user_id)"
+            )
 
 
 def record_bot_user(
     conn,
     *,
+    platform: str = "telegram",
     user_id: int,
     username: str | None = None,
     first_name: str | None = None,
     last_name: str | None = None,
     action: str | None = None,
 ) -> None:
-    """Upsert a Telegram user, bumping interaction count and last_seen."""
+    """Upsert a bot user, bumping interaction count and last_seen."""
     with conn.cursor() as cursor:
         cursor.execute(
             """
             INSERT INTO bot_users
-                (user_id, username, first_name, last_name, last_action, interaction_count)
-            VALUES (%s, %s, %s, %s, %s, 1)
+                (platform, user_id, username, first_name, last_name, last_action, interaction_count)
+            VALUES (%s, %s, %s, %s, %s, %s, 1)
             ON DUPLICATE KEY UPDATE
                 username = VALUES(username),
                 first_name = VALUES(first_name),
@@ -747,7 +769,7 @@ def record_bot_user(
                 interaction_count = interaction_count + 1,
                 last_seen = CURRENT_TIMESTAMP
             """,
-            (user_id, username, first_name, last_name, action),
+            (platform, user_id, username, first_name, last_name, action),
         )
 
 
