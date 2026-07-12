@@ -203,7 +203,11 @@ tbody tr:hover {
 
 input[type="text"],
 input[type="password"],
-input[type="search"] {
+input[type="search"],
+input[type="email"],
+input[type="date"],
+select,
+textarea {
   background: #fff;
   border: 1px solid var(--line);
   color: var(--text);

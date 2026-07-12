@@ -22,21 +22,28 @@ from contact_utils import (
     build_template_context,
 )
 from crm_db import (
+    CALL_OUTCOMES,
     CRM_SETTINGS_KEYS,
     ROLE_ADMIN,
     ROLE_SUPER,
     create_admin,
+    create_call_log,
     create_campaign,
     crm_stats,
+    count_call_logs,
     delete_automation_rule,
     delete_template,
     get_admin_by_id,
     get_all_settings,
     get_automation_rule,
+    get_call_log,
     get_campaign,
+    get_call_logs_for_domain,
+    get_latest_call_for_domain,
     get_template,
     list_admins,
     list_automation_rules,
+    list_call_logs,
     list_campaigns,
     list_message_logs,
     list_templates,
@@ -46,6 +53,7 @@ from crm_db import (
     save_template,
     update_admin,
     count_message_logs,
+    call_stats,
 )
 from crm_service import run_campaign
 from db import mysql_connection
@@ -463,3 +471,110 @@ def preview_context():
 
     context = build_template_context(row)
     return jsonify({"source": "domain", "domain": row.get("domain"), "context": context})
+
+
+@crm_bp.route("/calls")
+@login_required
+def calls_list():
+    filter_type = request.args.get("filter", "all")
+    if filter_type not in ("all", "today", "interested"):
+        filter_type = "all"
+    try:
+        page = max(0, int(request.args.get("page", 0)))
+    except ValueError:
+        page = 0
+    page_size = 30
+    offset = page * page_size
+
+    with mysql_connection(_config().mysql) as conn:
+        rows = list_call_logs(
+            conn, filter_type=filter_type, limit=page_size, offset=offset
+        )
+        total = count_call_logs(conn, filter_type=filter_type)
+        stats = call_stats(conn)
+
+    pages = (total + page_size - 1) // page_size
+    return render_template(
+        "crm/calls.html",
+        rows=rows,
+        filter_type=filter_type,
+        stats=stats,
+        outcomes=CALL_OUTCOMES,
+        page=page,
+        pages=pages,
+        total=total,
+    )
+
+
+@crm_bp.route("/calls/new", methods=["GET", "POST"])
+@login_required
+def call_new():
+    domain_id = request.args.get("domain_id") or request.form.get("domain_id")
+    domain_row = None
+    search_results = []
+
+    if request.method == "POST":
+        domain_id_raw = request.form.get("domain_id", "").strip()
+        outcome = request.form.get("outcome", "").strip()
+        notes = request.form.get("notes", "").strip()
+        phone_used = request.form.get("phone_used", "").strip()
+        next_follow_up = request.form.get("next_follow_up_at", "").strip() or None
+
+        if not domain_id_raw or not domain_id_raw.isdigit():
+            flash("دامنه را انتخاب کنید.", "error")
+        elif outcome not in CALL_OUTCOMES:
+            flash("نتیجه تماس را انتخاب کنید.", "error")
+        else:
+            with mysql_connection(_config().mysql) as conn:
+                create_call_log(
+                    conn,
+                    {
+                        "domain_id": int(domain_id_raw),
+                        "created_by": session.get("admin_id"),
+                        "phone_used": phone_used,
+                        "outcome": outcome,
+                        "notes": notes,
+                        "next_follow_up_at": next_follow_up,
+                    },
+                )
+                conn.commit()
+            flash("تماس ثبت شد.", "ok")
+            return redirect(
+                url_for("crm.calls_list", filter="today" if outcome == "callback" else "all")
+            )
+
+    query = (request.args.get("q") or "").strip()
+    with mysql_connection(_config().mysql) as conn:
+        if domain_id and str(domain_id).isdigit():
+            domain_row = q.get_domain_by_id(conn, int(domain_id))
+        if query:
+            search_results = q.search_domains(conn, query, limit=20)
+
+    default_phone = ""
+    if domain_row:
+        default_phone = (
+            domain_row.get("mobile_phone")
+            or domain_row.get("phone")
+            or ""
+        )
+
+    return render_template(
+        "crm/call_form.html",
+        domain=domain_row,
+        search_results=search_results,
+        query=query,
+        outcomes=CALL_OUTCOMES,
+        default_phone=default_phone,
+    )
+
+
+@crm_bp.route("/calls/<int:call_id>")
+@login_required
+def call_detail(call_id: int):
+    with mysql_connection(_config().mysql) as conn:
+        row = get_call_log(conn, call_id)
+    if not row:
+        abort(404)
+    return render_template(
+        "crm/call_detail.html", row=row, outcomes=CALL_OUTCOMES
+    )

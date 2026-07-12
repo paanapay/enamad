@@ -30,6 +30,18 @@ CRM_SETTINGS_KEYS = (
     "smtp_tls",
 )
 
+CALL_OUTCOMES = {
+    "not_called": "تماس نگرفته",
+    "no_answer": "پاسخ نداد",
+    "wrong_number": "شماره اشتباه",
+    "interested": "علاقه‌مند",
+    "not_interested": "عدم تمایل",
+    "callback": "تماس مجدد",
+    "converted": "تبدیل شده",
+}
+
+CALL_OUTCOME_POSITIVE = frozenset({"interested", "callback", "converted"})
+
 
 def ensure_crm_tables(conn) -> None:
     with conn.cursor() as cursor:
@@ -166,6 +178,32 @@ def ensure_crm_tables(conn) -> None:
                 ON DELETE SET NULL,
               CONSTRAINT fk_logs_template
                 FOREIGN KEY (template_id) REFERENCES message_templates (id)
+                ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS crm_call_logs (
+              id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+              domain_id BIGINT UNSIGNED NOT NULL,
+              created_by BIGINT UNSIGNED NULL,
+              phone_used VARCHAR(64) NULL,
+              outcome VARCHAR(32) NOT NULL,
+              notes TEXT NULL,
+              called_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              next_follow_up_at DATE NULL,
+              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (id),
+              KEY idx_calls_domain (domain_id),
+              KEY idx_calls_outcome (outcome),
+              KEY idx_calls_follow_up (next_follow_up_at),
+              KEY idx_calls_called_at (called_at),
+              CONSTRAINT fk_calls_domain
+                FOREIGN KEY (domain_id) REFERENCES enamad_domains (id)
+                ON DELETE CASCADE,
+              CONSTRAINT fk_calls_admin
+                FOREIGN KEY (created_by) REFERENCES admin_users (id)
                 ON DELETE SET NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """
@@ -750,6 +788,191 @@ def preview_template(template: dict, domain_row: dict) -> str:
     return "\n".join(parts)
 
 
+def create_call_log(conn, data: dict) -> int:
+    outcome = data.get("outcome") or "not_called"
+    if outcome not in CALL_OUTCOMES:
+        raise ValueError("نتیجه تماس نامعتبر است")
+    called_at = data.get("called_at")
+    with conn.cursor() as cursor:
+        if called_at:
+            cursor.execute(
+                """
+                INSERT INTO crm_call_logs (
+                  domain_id, created_by, phone_used, outcome, notes,
+                  called_at, next_follow_up_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    int(data["domain_id"]),
+                    data.get("created_by"),
+                    data.get("phone_used") or None,
+                    outcome,
+                    data.get("notes") or None,
+                    called_at,
+                    data.get("next_follow_up_at") or None,
+                ),
+            )
+        else:
+            cursor.execute(
+                """
+                INSERT INTO crm_call_logs (
+                  domain_id, created_by, phone_used, outcome, notes,
+                  next_follow_up_at
+                ) VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    int(data["domain_id"]),
+                    data.get("created_by"),
+                    data.get("phone_used") or None,
+                    outcome,
+                    data.get("notes") or None,
+                    data.get("next_follow_up_at") or None,
+                ),
+            )
+        return int(cursor.lastrowid)
+
+
+def get_call_log(conn, call_id: int) -> dict | None:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT c.*, d.domain, d.business_name, d.owner_name,
+                   a.username AS created_by_name, a.display_name AS created_by_display
+            FROM crm_call_logs c
+            JOIN enamad_domains d ON d.id = c.domain_id
+            LEFT JOIN admin_users a ON a.id = c.created_by
+            WHERE c.id = %s
+            """,
+            (call_id,),
+        )
+        return cursor.fetchone()
+
+
+def list_call_logs(
+    conn,
+    *,
+    filter_type: str = "all",
+    outcome: str | None = None,
+    domain_id: int | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict]:
+    sql = """
+        SELECT c.*, d.domain, d.business_name, d.owner_name, d.mobile_phone,
+               a.username AS created_by_name, a.display_name AS created_by_display
+        FROM crm_call_logs c
+        JOIN enamad_domains d ON d.id = c.domain_id
+        LEFT JOIN admin_users a ON a.id = c.created_by
+        WHERE 1=1
+    """
+    params: list[Any] = []
+
+    if domain_id:
+        sql += " AND c.domain_id = %s"
+        params.append(domain_id)
+
+    if outcome:
+        sql += " AND c.outcome = %s"
+        params.append(outcome)
+    elif filter_type == "today":
+        sql += """
+          AND c.next_follow_up_at IS NOT NULL
+          AND c.next_follow_up_at <= CURDATE()
+          AND c.outcome IN ('interested', 'callback')
+        """
+    elif filter_type == "interested":
+        sql += " AND c.outcome IN ('interested', 'callback')"
+
+    sql += " ORDER BY c.called_at DESC, c.id DESC LIMIT %s OFFSET %s"
+    params.extend([limit, offset])
+
+    with conn.cursor() as cursor:
+        cursor.execute(sql, params)
+        return list(cursor.fetchall())
+
+
+def count_call_logs(
+    conn,
+    *,
+    filter_type: str = "all",
+    outcome: str | None = None,
+    domain_id: int | None = None,
+) -> int:
+    sql = "SELECT COUNT(*) AS c FROM crm_call_logs c WHERE 1=1"
+    params: list[Any] = []
+
+    if domain_id:
+        sql += " AND c.domain_id = %s"
+        params.append(domain_id)
+    if outcome:
+        sql += " AND c.outcome = %s"
+        params.append(outcome)
+    elif filter_type == "today":
+        sql += """
+          AND c.next_follow_up_at IS NOT NULL
+          AND c.next_follow_up_at <= CURDATE()
+          AND c.outcome IN ('interested', 'callback')
+        """
+    elif filter_type == "interested":
+        sql += " AND c.outcome IN ('interested', 'callback')"
+
+    with conn.cursor() as cursor:
+        cursor.execute(sql, params)
+        return int((cursor.fetchone() or {}).get("c") or 0)
+
+
+def get_latest_call_for_domain(conn, domain_id: int) -> dict | None:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT c.*, a.username AS created_by_name, a.display_name AS created_by_display
+            FROM crm_call_logs c
+            LEFT JOIN admin_users a ON a.id = c.created_by
+            WHERE c.domain_id = %s
+            ORDER BY c.called_at DESC, c.id DESC
+            LIMIT 1
+            """,
+            (domain_id,),
+        )
+        return cursor.fetchone()
+
+
+def get_call_logs_for_domain(conn, domain_id: int, *, limit: int = 20) -> list[dict]:
+    return list_call_logs(conn, domain_id=domain_id, limit=limit, offset=0)
+
+
+def call_stats(conn) -> dict[str, int]:
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT COUNT(*) AS c FROM crm_call_logs")
+        total = int((cursor.fetchone() or {}).get("c") or 0)
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS c FROM crm_call_logs
+            WHERE next_follow_up_at IS NOT NULL
+              AND next_follow_up_at <= CURDATE()
+              AND outcome IN ('interested', 'callback')
+            """
+        )
+        follow_up_today = int((cursor.fetchone() or {}).get("c") or 0)
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS c FROM crm_call_logs
+            WHERE outcome IN ('interested', 'callback')
+            """
+        )
+        interested = int((cursor.fetchone() or {}).get("c") or 0)
+        cursor.execute(
+            "SELECT COUNT(*) AS c FROM crm_call_logs WHERE outcome = 'converted'"
+        )
+        converted = int((cursor.fetchone() or {}).get("c") or 0)
+    return {
+        "total": total,
+        "follow_up_today": follow_up_today,
+        "interested": interested,
+        "converted": converted,
+    }
+
+
 def crm_stats(conn) -> dict[str, int]:
     with conn.cursor() as cursor:
         cursor.execute("SELECT COUNT(*) AS c FROM message_templates WHERE is_active=1")
@@ -779,6 +1002,7 @@ def crm_stats(conn) -> dict[str, int]:
             """
         )
         email_domains = int((cursor.fetchone() or {}).get("c") or 0)
+        calls = call_stats(conn)
     return {
         "templates": templates,
         "rules": rules,
@@ -786,4 +1010,8 @@ def crm_stats(conn) -> dict[str, int]:
         "mobile_domains": mobile_domains,
         "landline_domains": landline_domains,
         "email_domains": email_domains,
+        "calls_total": calls["total"],
+        "calls_follow_up_today": calls["follow_up_today"],
+        "calls_interested": calls["interested"],
+        "calls_converted": calls["converted"],
     }

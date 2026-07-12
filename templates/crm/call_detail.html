@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% set active = 'crm' %}
+{% block title %}تماس {{ row.domain }}{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('crm.calls_list') }}">‹ بازگشت به تماس‌ها</a></p>
+<h1>جزئیات تماس</h1>
+
+<div class="panel">
+  <div class="kv">
+    <div class="k">دامنه</div>
+    <div class="mono"><a href="{{ url_for('domain_detail', domain_id=row.domain_id) }}">{{ row.domain }}</a></div>
+    <div class="k">کسب‌وکار</div><div>{{ row.business_name or '—' }}</div>
+    <div class="k">مالک</div><div>{{ row.owner_name or '—' }}</div>
+    <div class="k">شماره تماس</div><div class="mono">{{ row.phone_used or '—' }}</div>
+    <div class="k">نتیجه</div>
+    <div><span class="badge {{ 'ok' if row.outcome in ('interested','callback','converted') else 'no' }}">{{ row.outcome|call_outcome }}</span></div>
+    <div class="k">تاریخ تماس</div><div class="mono">{{ row.called_at }}</div>
+    <div class="k">پیگیری بعدی</div><div class="mono">{{ row.next_follow_up_at or '—' }}</div>
+    <div class="k">ثبت‌کننده</div><div>{{ row.created_by_display or row.created_by_name or '—' }}</div>
+    <div class="k">یادداشت</div><div>{{ row.notes or '—' }}</div>
+  </div>
+  <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+    <a class="btn" href="{{ url_for('crm.call_new', domain_id=row.domain_id) }}">ثبت تماس جدید برای همین دامنه</a>
+    <a class="btn ghost" href="{{ url_for('domain_detail', domain_id=row.domain_id) }}">مشاهده دامنه</a>
+  </div>
+</div>
+{% endblock %}

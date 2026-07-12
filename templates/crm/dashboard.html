@@ -11,9 +11,15 @@
   <div class="card stat"><div class="num">{{ stats.mobile_domains|group }}</div><div class="lbl">دامنه با موبایل</div></div>
   <div class="card stat"><div class="num">{{ stats.landline_domains|group }}</div><div class="lbl">دامنه با تلفن ثابت</div></div>
   <div class="card stat"><div class="num">{{ stats.email_domains|group }}</div><div class="lbl">دامنه با ایمیل</div></div>
+  <div class="card stat"><div class="num">{{ stats.calls_follow_up_today|group }}</div><div class="lbl">پیگیری امروز</div></div>
+  <div class="card stat"><div class="num">{{ stats.calls_interested|group }}</div><div class="lbl">علاقه‌مند</div></div>
 </div>
 
 <div class="grid">
+  <a class="card" href="{{ url_for('crm.calls_list') }}" style="text-decoration:none;color:inherit">
+    <h2>📞 تماس‌ها</h2>
+    <p class="muted">ثبت نتیجه تماس و پیگیری فروش ({{ stats.calls_total|group }} تماس)</p>
+  </a>
   <a class="card" href="{{ url_for('crm.settings') }}" style="text-decoration:none;color:inherit">
     <h2>⚙️ تنظیمات</h2>
     <p class="muted">API کاوه‌نگار و SMTP ایمیل</p>

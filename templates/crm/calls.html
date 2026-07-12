@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% set active = 'crm' %}
+{% block title %}تماس‌ها و پیگیری{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('crm.dashboard') }}">‹ بازگشت به CRM</a></p>
+<h1>تماس‌ها و پیگیری فروش</h1>
+
+<div class="grid" style="margin-bottom:18px">
+  <div class="card stat"><div class="num">{{ stats.total|group }}</div><div class="lbl">کل تماس‌ها</div></div>
+  <div class="card stat"><div class="num">{{ stats.follow_up_today|group }}</div><div class="lbl">پیگیری امروز</div></div>
+  <div class="card stat"><div class="num">{{ stats.interested|group }}</div><div class="lbl">علاقه‌مند / تماس مجدد</div></div>
+  <div class="card stat"><div class="num">{{ stats.converted|group }}</div><div class="lbl">تبدیل شده</div></div>
+</div>
+
+<div class="tabs">
+  <a href="{{ url_for('crm.calls_list', filter='all') }}" class="{{ 'active' if filter_type=='all' }}">همه تماس‌ها</a>
+  <a href="{{ url_for('crm.calls_list', filter='today') }}" class="{{ 'active' if filter_type=='today' }}">پیگیری امروز</a>
+  <a href="{{ url_for('crm.calls_list', filter='interested') }}" class="{{ 'active' if filter_type=='interested' }}">علاقه‌مندها</a>
+  <a class="btn" href="{{ url_for('crm.call_new') }}" style="margin-right:auto">+ ثبت تماس</a>
+</div>
+
+<div class="panel" style="padding:0;overflow:auto">
+  <table>
+    <thead>
+      <tr>
+        <th>تاریخ</th>
+        <th>دامنه</th>
+        <th>کسب‌وکار / مالک</th>
+        <th>شماره</th>
+        <th>نتیجه</th>
+        <th>پیگیری بعدی</th>
+        <th>اپراتور</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in rows %}
+      <tr>
+        <td class="mono">{{ c.called_at }}</td>
+        <td class="mono"><a href="{{ url_for('domain_detail', domain_id=c.domain_id) }}">{{ c.domain }}</a></td>
+        <td>{{ c.business_name or '—' }}<div class="muted" style="font-size:12px">{{ c.owner_name or '' }}</div></td>
+        <td class="mono">{{ c.phone_used or c.mobile_phone or '—' }}</td>
+        <td><span class="badge {{ 'ok' if c.outcome in ('interested','callback','converted') else 'no' }}">{{ c.outcome|call_outcome }}</span></td>
+        <td class="mono">{{ c.next_follow_up_at or '—' }}</td>
+        <td>{{ c.created_by_display or c.created_by_name or '—' }}</td>
+        <td><a href="{{ url_for('crm.call_detail', call_id=c.id) }}">جزئیات ›</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="empty">تماسی ثبت نشده.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if pages > 1 %}
+<div class="pager">
+  {% if page > 0 %}
+    <a href="{{ url_for('crm.calls_list', filter=filter_type, page=page-1) }}">‹ قبلی</a>
+  {% else %}<span class="disabled">‹ قبلی</span>{% endif %}
+  <span>صفحه {{ (page+1)|group }} از {{ pages|group }}</span>
+  {% if page + 1 < pages %}
+    <a href="{{ url_for('crm.calls_list', filter=filter_type, page=page+1) }}">بعدی ›</a>
+  {% else %}<span class="disabled">بعدی ›</span>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

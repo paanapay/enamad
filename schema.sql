@@ -213,3 +213,26 @@ CREATE TABLE IF NOT EXISTS message_logs (
     FOREIGN KEY (template_id) REFERENCES message_templates (id)
     ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS crm_call_logs (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  domain_id BIGINT UNSIGNED NOT NULL,
+  created_by BIGINT UNSIGNED NULL,
+  phone_used VARCHAR(64) NULL,
+  outcome VARCHAR(32) NOT NULL,
+  notes TEXT NULL,
+  called_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  next_follow_up_at DATE NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_calls_domain (domain_id),
+  KEY idx_calls_outcome (outcome),
+  KEY idx_calls_follow_up (next_follow_up_at),
+  KEY idx_calls_called_at (called_at),
+  CONSTRAINT fk_calls_domain
+    FOREIGN KEY (domain_id) REFERENCES enamad_domains (id)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_calls_admin
+    FOREIGN KEY (created_by) REFERENCES admin_users (id)
+    ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

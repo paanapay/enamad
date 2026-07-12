@@ -19,7 +19,7 @@ from flask import (
 )
 
 import bot_queries as q
-from crm_db import ROLE_SUPER, authenticate_admin, ensure_crm_tables
+from crm_db import ROLE_SUPER, authenticate_admin, ensure_crm_tables, CALL_OUTCOMES
 from crm_panel import crm_bp
 from db import load_config, mysql_connection
 
@@ -119,6 +119,11 @@ def phone_label_filter(value):
         "none": "—",
     }
     return labels.get(value or "", value or "—")
+
+
+@app.template_filter("call_outcome")
+def call_outcome_filter(value):
+    return CALL_OUTCOMES.get(value or "", value or "—")
 
 
 @app.route("/healthz")
@@ -239,6 +244,8 @@ def domains():
 @app.route("/domain/<int:domain_id>")
 @login_required
 def domain_detail(domain_id: int):
+    from crm_db import get_call_logs_for_domain, get_latest_call_for_domain
+
     with mysql_connection(app_config().mysql) as conn:
         row = q.get_domain_by_id(conn, domain_id)
         if not row:
@@ -246,7 +253,15 @@ def domain_detail(domain_id: int):
         services = q.get_domain_services(
             conn, row.get("enamad_id"), row.get("code")
         )
-    return render_template("domain_detail.html", d=row, services=services)
+        latest_call = get_latest_call_for_domain(conn, domain_id)
+        call_history = get_call_logs_for_domain(conn, domain_id, limit=15)
+    return render_template(
+        "domain_detail.html",
+        d=row,
+        services=services,
+        latest_call=latest_call,
+        call_history=call_history,
+    )
 
 
 @app.route("/estelam", methods=["GET", "POST"])

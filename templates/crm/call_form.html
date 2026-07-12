@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% set active = 'crm' %}
+{% block title %}ثبت تماس{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('crm.calls_list') }}">‹ بازگشت به تماس‌ها</a></p>
+<h1>ثبت تماس جدید</h1>
+
+{% if not domain %}
+<form method="get" action="{{ url_for('crm.call_new') }}" class="searchbar" style="margin-bottom:16px">
+  <input type="search" name="q" value="{{ query }}" placeholder="نام دامنه، کسب‌وکار یا مالک…">
+  <button class="btn" type="submit">جستجو</button>
+</form>
+{% endif %}
+
+<form method="post" class="panel">
+  {% if domain %}
+  <input type="hidden" name="domain_id" value="{{ domain.id }}">
+  <div class="panel" style="background:var(--panel2);margin-bottom:16px">
+    <h2 style="margin-top:0">دامنه انتخاب‌شده</h2>
+    <div class="kv">
+      <div class="k">دامنه</div><div class="mono"><a href="{{ url_for('domain_detail', domain_id=domain.id) }}">{{ domain.domain }}</a></div>
+      <div class="k">کسب‌وکار</div><div>{{ domain.business_name or '—' }}</div>
+      <div class="k">مالک</div><div>{{ domain.owner_name or '—' }}</div>
+      <div class="k">موبایل</div><div class="mono">{{ domain.mobile_phone or '—' }}</div>
+      <div class="k">تلفن</div><div class="mono">{{ domain.phone or '—' }}</div>
+    </div>
+  </div>
+  {% else %}
+  <div class="form-row">
+    <label>انتخاب دامنه *</label>
+    {% if search_results %}
+    <table style="margin-top:12px">
+      <thead><tr><th></th><th>دامنه</th><th>کسب‌وکار</th><th>موبایل</th></tr></thead>
+      <tbody>
+        {% for d in search_results %}
+        <tr>
+          <td><input type="radio" name="domain_id" value="{{ d.id }}" required></td>
+          <td class="mono">{{ d.domain }}</td>
+          <td>{{ d.business_name or '—' }}</td>
+          <td class="mono">{{ d.mobile_phone or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% elif query %}
+    <p class="muted">دامنه‌ای یافت نشد. جستجو کنید.</p>
+    {% else %}
+    <p class="muted">ابتدا دامنه را جستجو کنید.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="form-row">
+    <label>شماره تماس‌گرفته‌شده</label>
+    <input type="text" name="phone_used" value="{{ default_phone }}" dir="ltr" style="width:100%">
+  </div>
+
+  <div class="form-row">
+    <label>نتیجه تماس *</label>
+    <select name="outcome" required>
+      {% for key, label in outcomes.items() %}
+      <option value="{{ key }}">{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="form-row">
+    <label>یادداشت</label>
+    <textarea name="notes" rows="4" style="width:100%" placeholder="خلاصه مکالمه، نکات مهم، قیمت پیشنهادی و …"></textarea>
+  </div>
+
+  <div class="form-row">
+    <label>تاریخ پیگیری بعدی</label>
+    <input type="date" name="next_follow_up_at" style="width:200px">
+    <div class="hint muted">برای «تماس مجدد» یا «علاقه‌مند» پر کنید تا در لیست پیگیری امروز بیاید.</div>
+  </div>
+
+  <button class="btn" type="submit">ثبت تماس</button>
+</form>
+{% endblock %}

@@ -36,6 +36,45 @@
   <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
     <a class="btn" href="{{ url_for('estelam', domain=d.domain) }}">استعلام زندهٔ مجدد</a>
     <a class="btn ghost" href="{{ url_for('crm.campaign_new') }}?q={{ d.domain }}">ارسال پیام CRM ›</a>
+    <a class="btn ghost" href="{{ url_for('crm.call_new', domain_id=d.id) }}">ثبت تماس ›</a>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>تماس و پیگیری فروش</h2>
+  {% if latest_call %}
+  <div class="kv" style="margin-bottom:14px">
+    <div class="k">آخرین وضعیت</div>
+    <div><span class="badge {{ 'ok' if latest_call.outcome in ('interested','callback','converted') else 'no' }}">{{ latest_call.outcome|call_outcome }}</span></div>
+    <div class="k">آخرین تماس</div><div class="mono">{{ latest_call.called_at }}</div>
+    <div class="k">پیگیری بعدی</div><div class="mono">{{ latest_call.next_follow_up_at or '—' }}</div>
+    {% if latest_call.notes %}
+    <div class="k">یادداشت</div><div>{{ latest_call.notes }}</div>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% if call_history %}
+  <table>
+    <thead><tr><th>تاریخ</th><th>نتیجه</th><th>شماره</th><th>پیگیری</th><th>یادداشت</th><th></th></tr></thead>
+    <tbody>
+      {% for c in call_history %}
+      <tr>
+        <td class="mono">{{ c.called_at }}</td>
+        <td><span class="badge {{ 'ok' if c.outcome in ('interested','callback','converted') else 'no' }}">{{ c.outcome|call_outcome }}</span></td>
+        <td class="mono">{{ c.phone_used or '—' }}</td>
+        <td class="mono">{{ c.next_follow_up_at or '—' }}</td>
+        <td class="muted" style="font-size:12px;max-width:200px">{{ c.notes or '' }}</td>
+        <td><a href="{{ url_for('crm.call_detail', call_id=c.id) }}">جزئیات</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">هنوز تماسی ثبت نشده.</div>
+  {% endif %}
+  <div style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap">
+    <a href="{{ url_for('crm.calls_list') }}">مشاهده همه تماس‌ها ›</a>
+    <a href="{{ url_for('crm.call_new', domain_id=d.id) }}">ثبت تماس جدید ›</a>
   </div>
 </div>
 
