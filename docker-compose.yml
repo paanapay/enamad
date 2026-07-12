@@ -83,7 +83,7 @@ services:
   web:
     build: .
     # Admin web panel (Flask via gunicorn). Bound to localhost; the host's
-    # nginx reverse-proxies enamad.paanapay.com -> 127.0.0.1:8095.
+    # nginx reverse-proxies enamad.<your-domain> -> 127.0.0.1:8095.
     command: >
       gunicorn --bind 127.0.0.1:8095 --workers 2 --timeout 120 webapp:app
     restart: unless-stopped

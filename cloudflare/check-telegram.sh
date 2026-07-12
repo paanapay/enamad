@@ -1,6 +1,6 @@
 #!/bin/bash
 ENV_FILE="${ENAMAD_ENV:-/srv/enamad/.env}"
-HOSTN="${WORKER_HOSTNAME:-tgapi.paanapay.com}"
+HOSTN="${WORKER_HOSTNAME:-tgapi.example.com}"
 TOK=$(grep -E '^(TELEGRAM_BOT_TOKEN|BOT_TOKEN)=' "$ENV_FILE" | head -1 | cut -d= -f2-)
 if [ -z "$TOK" ]; then echo "no telegram token in $ENV_FILE"; exit 1; fi
 echo "=== getMe via worker ==="

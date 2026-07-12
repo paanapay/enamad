@@ -14,15 +14,15 @@
 #
 # Optional env overrides:
 #   WORKER_NAME (default enamad-telegram-proxy)
-#   ZONE_DOMAIN (default paanapay.com)
-#   WORKER_HOSTNAME (default tgapi.paanapay.com)
+#   ZONE_DOMAIN (default example.com)
+#   WORKER_HOSTNAME (default tgapi.example.com)
 #   CLOUDFLARE_ACCOUNT_ID (skip account lookup)
 #   ENAMAD_ENV (default /srv/enamad/.env)
 set -euo pipefail
 
 WORKER_NAME="${WORKER_NAME:-enamad-telegram-proxy}"
-ZONE_DOMAIN="${ZONE_DOMAIN:-paanapay.com}"
-WORKER_HOSTNAME="${WORKER_HOSTNAME:-tgapi.paanapay.com}"
+ZONE_DOMAIN="${ZONE_DOMAIN:-example.com}"
+WORKER_HOSTNAME="${WORKER_HOSTNAME:-tgapi.example.com}"
 COMPAT_DATE="2024-11-01"
 API="https://api.cloudflare.com/client/v4"
 HERE="$(cd "$(dirname "$0")" && pwd)"

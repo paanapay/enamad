@@ -19,7 +19,7 @@ tar -xzf "$ARCHIVE" -C /tmp
 
 mkdir -p "$APP_DIR"
 if [ ! -d "$APP_DIR/.git" ]; then
-  git clone https://github.com/paanapay/enamad.git "$APP_DIR"
+  git clone "${ENAMAD_REPO:-https://github.com/YOUR_USERNAME/enamad.git}" "$APP_DIR"
 fi
 
 cp /tmp/enamad-migration/.env "$APP_DIR/.env"

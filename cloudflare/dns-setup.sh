@@ -1,9 +1,9 @@
 #!/bin/bash
-# Create/ensure a DNS A record for a subdomain of paanapay.com on Cloudflare.
-# Usage: CLOUDFLARE_API_TOKEN=... SUBDOMAIN=enamad.paanapay.com IP=45.149.76.142 PROXIED=false bash dns-setup.sh
+# Create/ensure a DNS A record for a subdomain on Cloudflare.
+# Usage: CLOUDFLARE_API_TOKEN=... ZONE_DOMAIN=example.com SUBDOMAIN=enamad.example.com IP=203.0.113.10 PROXIED=false bash dns-setup.sh
 set -euo pipefail
 T="${CLOUDFLARE_API_TOKEN:?set token}"
-ZONE_DOMAIN="${ZONE_DOMAIN:-paanapay.com}"
+ZONE_DOMAIN="${ZONE_DOMAIN:-example.com}"
 SUB="${SUBDOMAIN:?set SUBDOMAIN}"
 IP="${IP:?set IP}"
 PROXIED="${PROXIED:-false}"

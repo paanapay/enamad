@@ -10,7 +10,7 @@
  *   /file/bot<token>/<path>     -> https://api.telegram.org/file/bot<token>/<path>
  *
  * Configure the bot with:
- *   TELEGRAM_API_BASE_URL = https://tgapi.paanapay.com/bot
+ *   TELEGRAM_API_BASE_URL = https://tgapi.example.com/bot
  */
 export default {
   async fetch(request) {
