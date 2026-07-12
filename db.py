@@ -407,7 +407,7 @@ def refresh_stale_domains(
 
     Returns (candidates, ok, failed). By default oldest `updated_at` is refreshed first.
     With `missing_only`, only rows lacking address/phone/email are picked.
-    With `newest_first`, newest DB rows (highest id) are picked first.
+    With `newest_first`, domains at the front of the enamad site list are picked first.
     """
     rows = _select_stale_ids(
         conn, days, limit, missing_only=missing_only, newest_first=newest_first
@@ -465,7 +465,7 @@ def _select_stale_ids(
     - Normal: those not updated in the last `days` days (oldest first).
     - missing_only: only rows lacking contact details (address/phone/email),
       regardless of `updated_at`.
-    - newest_first: order by id DESC (newest registered domains first).
+    - newest_first: same order as panel sort=latest (source_page/row, front of enamad list).
     """
     if missing_only:
         where = (
@@ -487,7 +487,13 @@ def _select_stale_ids(
         )
         params = (days, limit)
 
-    order = "id DESC" if newest_first else "updated_at ASC"
+    if newest_first:
+        order = (
+            "CASE WHEN source_page IS NULL OR source_row IS NULL THEN 1 ELSE 0 END ASC, "
+            "source_page ASC, source_row ASC, id ASC"
+        )
+    else:
+        order = "updated_at ASC"
 
     with conn.cursor() as cursor:
         cursor.execute(

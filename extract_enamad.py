@@ -1849,7 +1849,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--newest-first",
         action="store_true",
-        help="With --refresh-stale: start from newest registered domains (id DESC)",
+        help="With --refresh-stale: start from front of enamad site list (panel sort=latest)",
     )
     parser.add_argument(
         "--all",

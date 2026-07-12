@@ -59,6 +59,7 @@ class SchedulerConfig:
     refresh_limit: int
     refresh_workers: int
     refresh_missing_only: bool
+    refresh_newest_first: bool
     run_on_start: bool
     enable_update: bool
     enable_refresh: bool
@@ -89,7 +90,8 @@ def load_scheduler_config(path: Path) -> SchedulerConfig:
         refresh_days=get_int("refresh_days", 30),
         refresh_limit=get_int("refresh_limit", 500),
         refresh_workers=get_int("refresh_workers", 4),
-        refresh_missing_only=get_bool("refresh_missing_only", False),
+        refresh_missing_only=get_bool("refresh_missing_only", True),
+        refresh_newest_first=get_bool("refresh_newest_first", True),
         run_on_start=get_bool("run_on_start", False),
         enable_update=get_bool("enable_update", True),
         enable_refresh=get_bool("enable_refresh", True),
@@ -134,6 +136,8 @@ def make_refresh_job(cfg: SchedulerConfig, config_path: Path):
         ]
         if cfg.refresh_missing_only:
             args.append("--missing-only")
+        if cfg.refresh_newest_first:
+            args.append("--newest-first")
         _run("refresh-stale", args, config_path)
 
     return job
@@ -175,10 +179,11 @@ def main() -> int:
             coalesce=True,
         )
         log.info(
-            "Scheduled 'refresh-stale' with cron '%s' (%s)%s.",
+            "Scheduled 'refresh-stale' with cron '%s' (%s)%s%s.",
             cfg.refresh_cron,
             cfg.timezone,
             " [missing-only]" if cfg.refresh_missing_only else "",
+            " [newest-first]" if cfg.refresh_newest_first else "",
         )
 
     if not scheduler.get_jobs():
