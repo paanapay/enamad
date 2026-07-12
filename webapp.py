@@ -19,6 +19,7 @@ from flask import (
 )
 
 import bot_queries as q
+from cache_utils import cached
 from crm_db import ROLE_SUPER, authenticate_admin, ensure_crm_tables, CALL_OUTCOMES
 from jalali_utils import format_jdate, format_jdatetime
 from crm_panel import crm_bp
@@ -205,16 +206,24 @@ def logout():
     return redirect(url_for("login"))
 
 
+STATS_CACHE_TTL = int(os.environ.get("WEB_STATS_CACHE_TTL", "60"))
+
+
 @app.route("/")
 @login_required
 def dashboard():
-    with mysql_connection(app_config().mysql) as conn:
-        stats = q.get_stats(conn)
-        users = q.get_bot_user_stats(conn)
+    def produce():
         from crm_db import crm_stats
 
-        crm = crm_stats(conn)
-    return render_template("dashboard.html", stats=stats, users=users, crm=crm)
+        with mysql_connection(app_config().mysql) as conn:
+            return {
+                "stats": q.get_stats(conn),
+                "users": q.get_bot_user_stats(conn),
+                "crm": crm_stats(conn),
+            }
+
+    data = cached("web_dashboard", STATS_CACHE_TTL, produce)
+    return render_template("dashboard.html", **data)
 
 
 @app.route("/domains")

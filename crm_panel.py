@@ -1,8 +1,10 @@
 """CRM admin panel routes (Flask Blueprint)."""
 from __future__ import annotations
 
+import os
 from functools import wraps
 
+from cache_utils import cached
 from flask import (
     Blueprint,
     abort,
@@ -125,10 +127,16 @@ def inject_admin():
 @crm_bp.route("/")
 @login_required
 def dashboard():
-    with mysql_connection(_config().mysql) as conn:
-        stats = crm_stats(conn)
-        campaigns = list_campaigns(conn, limit=5)
-    return render_template("crm/dashboard.html", stats=stats, campaigns=campaigns)
+    def produce():
+        with mysql_connection(_config().mysql) as conn:
+            return {
+                "stats": crm_stats(conn),
+                "campaigns": list_campaigns(conn, limit=5),
+            }
+
+    ttl = int(os.environ.get("WEB_STATS_CACHE_TTL", "60"))
+    data = cached("crm_dashboard", ttl, produce)
+    return render_template("crm/dashboard.html", **data)
 
 
 @crm_bp.route("/settings", methods=["GET", "POST"])
