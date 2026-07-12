@@ -46,6 +46,7 @@ def app_config():
 def _ensure_schema():
     with mysql_connection(app_config().mysql) as conn:
         ensure_domain_detail_columns(conn)
+        ensure_domain_indexes(conn)
         ensure_crm_tables(conn)
         conn.commit()
 

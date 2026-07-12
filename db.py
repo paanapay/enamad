@@ -810,6 +810,7 @@ def init_database(cfg: MySQLConfig) -> None:
         ensure_bot_users_table(conn)
         from crm_db import ensure_crm_tables
 
+        ensure_domain_indexes(conn)
         ensure_crm_tables(conn)
         conn.commit()
     finally:
@@ -841,6 +842,27 @@ def ensure_domain_detail_columns(conn) -> None:
         for name, ddl in DOMAIN_DETAIL_COLUMNS.items():
             if name not in existing:
                 cursor.execute(f"ALTER TABLE enamad_domains ADD COLUMN {name} {ddl}")
+
+
+DOMAIN_INDEXES = {
+    "idx_source_order": "(source_page, source_row, id)",
+    "idx_phone_type": "(phone_type)",
+    "idx_rating": "(rating)",
+    "idx_updated_at": "(updated_at)",
+    "idx_approve_date": "(approve_date)",
+    "idx_email_normalized": "(email_normalized(64))",
+    "idx_owner_name": "(owner_name(191))",
+}
+
+
+def ensure_domain_indexes(conn) -> None:
+    """Add performance indexes for panel list/stats queries (idempotent)."""
+    with conn.cursor() as cursor:
+        cursor.execute("SHOW INDEX FROM enamad_domains")
+        existing = {row["Key_name"] for row in cursor.fetchall()}
+        for name, ddl in DOMAIN_INDEXES.items():
+            if name not in existing:
+                cursor.execute(f"CREATE INDEX {name} ON enamad_domains {ddl}")
 
 
 def ensure_services_table(conn) -> None:

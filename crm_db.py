@@ -229,7 +229,6 @@ def ensure_crm_tables(conn) -> None:
             )
 
     ensure_default_super_admin(conn)
-    backfill_contact_fields(conn)
 
 
 def backfill_contact_fields(conn, *, limit: int = 2000) -> int:
@@ -1167,73 +1166,54 @@ def get_call_logs_for_domain(conn, domain_id: int, *, limit: int = 20) -> list[d
 
 def call_stats(conn) -> dict[str, int]:
     with conn.cursor() as cursor:
-        cursor.execute("SELECT COUNT(*) AS c FROM crm_call_logs")
-        total = int((cursor.fetchone() or {}).get("c") or 0)
         cursor.execute(
             """
-            SELECT COUNT(*) AS c FROM crm_call_logs
-            WHERE next_follow_up_at IS NOT NULL
-              AND next_follow_up_at <= CURDATE()
-              AND outcome IN ('interested', 'callback')
+            SELECT
+                COUNT(*) AS total,
+                SUM(
+                    next_follow_up_at IS NOT NULL
+                    AND next_follow_up_at <= CURDATE()
+                    AND outcome IN ('interested', 'callback')
+                ) AS follow_up_today,
+                SUM(outcome IN ('interested', 'callback')) AS interested,
+                SUM(outcome = 'converted') AS converted
+            FROM crm_call_logs
             """
         )
-        follow_up_today = int((cursor.fetchone() or {}).get("c") or 0)
-        cursor.execute(
-            """
-            SELECT COUNT(*) AS c FROM crm_call_logs
-            WHERE outcome IN ('interested', 'callback')
-            """
-        )
-        interested = int((cursor.fetchone() or {}).get("c") or 0)
-        cursor.execute(
-            "SELECT COUNT(*) AS c FROM crm_call_logs WHERE outcome = 'converted'"
-        )
-        converted = int((cursor.fetchone() or {}).get("c") or 0)
+        row = cursor.fetchone() or {}
     return {
-        "total": total,
-        "follow_up_today": follow_up_today,
-        "interested": interested,
-        "converted": converted,
+        "total": int(row.get("total") or 0),
+        "follow_up_today": int(row.get("follow_up_today") or 0),
+        "interested": int(row.get("interested") or 0),
+        "converted": int(row.get("converted") or 0),
     }
 
 
 def crm_stats(conn) -> dict[str, int]:
     with conn.cursor() as cursor:
-        cursor.execute("SELECT COUNT(*) AS c FROM message_templates WHERE is_active=1")
-        templates = int((cursor.fetchone() or {}).get("c") or 0)
-        cursor.execute("SELECT COUNT(*) AS c FROM automation_rules WHERE is_active=1")
-        rules = int((cursor.fetchone() or {}).get("c") or 0)
-        cursor.execute("SELECT COUNT(*) AS c FROM message_campaigns")
-        campaigns = int((cursor.fetchone() or {}).get("c") or 0)
         cursor.execute(
             """
-            SELECT COUNT(*) AS c FROM enamad_domains
-            WHERE phone_type IN ('mobile', 'mixed')
+            SELECT
+                (SELECT COUNT(*) FROM message_templates WHERE is_active = 1) AS templates,
+                (SELECT COUNT(*) FROM automation_rules WHERE is_active = 1) AS rules,
+                (SELECT COUNT(*) FROM message_campaigns) AS campaigns,
+                SUM(phone_type IN ('mobile', 'mixed')) AS mobile_domains,
+                SUM(phone_type = 'landline') AS landline_domains,
+                SUM(
+                    email_normalized IS NOT NULL AND email_normalized != ''
+                ) AS email_domains
+            FROM enamad_domains
             """
         )
-        mobile_domains = int((cursor.fetchone() or {}).get("c") or 0)
-        cursor.execute(
-            """
-            SELECT COUNT(*) AS c FROM enamad_domains
-            WHERE phone_type = 'landline'
-            """
-        )
-        landline_domains = int((cursor.fetchone() or {}).get("c") or 0)
-        cursor.execute(
-            """
-            SELECT COUNT(*) AS c FROM enamad_domains
-            WHERE email_normalized IS NOT NULL AND email_normalized != ''
-            """
-        )
-        email_domains = int((cursor.fetchone() or {}).get("c") or 0)
+        row = cursor.fetchone() or {}
         calls = call_stats(conn)
     return {
-        "templates": templates,
-        "rules": rules,
-        "campaigns": campaigns,
-        "mobile_domains": mobile_domains,
-        "landline_domains": landline_domains,
-        "email_domains": email_domains,
+        "templates": int(row.get("templates") or 0),
+        "rules": int(row.get("rules") or 0),
+        "campaigns": int(row.get("campaigns") or 0),
+        "mobile_domains": int(row.get("mobile_domains") or 0),
+        "landline_domains": int(row.get("landline_domains") or 0),
+        "email_domains": int(row.get("email_domains") or 0),
         "calls_total": calls["total"],
         "calls_follow_up_today": calls["follow_up_today"],
         "calls_interested": calls["interested"],

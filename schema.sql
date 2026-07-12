@@ -48,8 +48,15 @@ CREATE TABLE IF NOT EXISTS enamad_domains (
   UNIQUE KEY uk_enamad_record (enamad_id, code),
   KEY idx_domain (domain),
   KEY idx_business_name (business_name(191)),
+  KEY idx_owner_name (owner_name(191)),
   KEY idx_province_city (province, city),
   KEY idx_scrape_run_id (scrape_run_id),
+  KEY idx_source_order (source_page, source_row, id),
+  KEY idx_phone_type (phone_type),
+  KEY idx_rating (rating),
+  KEY idx_updated_at (updated_at),
+  KEY idx_approve_date (approve_date),
+  KEY idx_email_normalized (email_normalized(64)),
   CONSTRAINT fk_enamad_domains_scrape_run
     FOREIGN KEY (scrape_run_id) REFERENCES scrape_runs (id)
     ON DELETE SET NULL

@@ -15,17 +15,25 @@ ENAMAD_STATUS_NOT_FOUND = "not_found"
 
 def get_stats(conn) -> dict[str, Any]:
     with conn.cursor() as cursor:
-        cursor.execute("SELECT COUNT(*) AS total FROM enamad_domains")
-        total = int(cursor.fetchone()["total"])
-
         cursor.execute(
             """
-            SELECT COUNT(*) AS rated
+            SELECT
+                COUNT(*) AS total,
+                SUM(rating >= 1) AS rated,
+                MAX(updated_at) AS last_update,
+                MAX(source_page) AS max_page,
+                COUNT(DISTINCT source_page) AS distinct_pages
             FROM enamad_domains
-            WHERE rating >= 1
             """
         )
-        rated = int(cursor.fetchone()["rated"])
+        summary = cursor.fetchone() or {}
+        total = int(summary.get("total") or 0)
+        rated = int(summary.get("rated") or 0)
+        last_update = summary.get("last_update")
+        page_coverage = {
+            "max_page": summary.get("max_page"),
+            "distinct_pages": summary.get("distinct_pages"),
+        }
 
         cursor.execute(
             """
@@ -34,16 +42,6 @@ def get_stats(conn) -> dict[str, Any]:
             """
         )
         all_state = {row["state_key"]: row["state_value"] for row in cursor.fetchall()}
-
-        cursor.execute(
-            """
-            SELECT MAX(source_page) AS max_page,
-                   COUNT(DISTINCT source_page) AS distinct_pages
-            FROM enamad_domains
-            WHERE source_page IS NOT NULL
-            """
-        )
-        page_coverage = cursor.fetchone() or {}
 
         worker_pages: list[int] = []
         for key, value in all_state.items():
@@ -89,14 +87,6 @@ def get_stats(conn) -> dict[str, Any]:
             """
         )
         last_major_run = cursor.fetchone()
-
-        cursor.execute(
-            """
-            SELECT MAX(updated_at) AS last_update
-            FROM enamad_domains
-            """
-        )
-        last_update = cursor.fetchone().get("last_update")
 
     return {
         "total": total,
