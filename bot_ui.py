@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import html
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -13,7 +12,16 @@ PAGE_SIZE = 10
 
 @dataclass(frozen=True)
 class TextFormat:
-    """Message text formatting — HTML for Telegram, Markdown for Bale."""
+    """Message text formatting.
+
+    - "html": Telegram HTML tags (<b>, <i>, <code>, <a>).
+    - "plain": Bale. Bale always interprets messages as Markdown and its bold
+      syntax needs padding spaces (which look ugly), while backslash-escaping
+      shows the backslashes literally. So we emit clean plain text with no
+      emphasis markers and no escaping. Inline `*`/`_` inside words are safe on
+      Bale because it only treats them as markup when surrounded by spaces.
+      Links still render, so we keep the `[label](url)` form.
+    """
 
     name: str
 
@@ -23,13 +31,13 @@ class TextFormat:
         text = str(value)
         if self.name == "html":
             return html.escape(text)
-        return re.sub(r"([\\*_\[\]()])", r"\\\1", text)
+        return text
 
     def bold(self, value: Any) -> str:
         text = self.esc(value)
         if self.name == "html":
             return f"<b>{text}</b>"
-        return f" ** {text} ** "
+        return text
 
     def code(self, value: Any) -> str:
         text = self.esc(value)
@@ -41,18 +49,18 @@ class TextFormat:
         text = self.esc(value)
         if self.name == "html":
             return f"<i>{text}</i>"
-        return f" _ {text} _ "
+        return text
 
     def link(self, label: Any, url: str) -> str:
         text = self.esc(label)
-        safe_url = html.escape(url, quote=True) if self.name == "html" else url
         if self.name == "html":
+            safe_url = html.escape(url, quote=True)
             return f'<a href="{safe_url}">{text}</a>'
-        return f"[{text}]({safe_url})"
+        return f"[{text}]({url})"
 
 
 HTML_FMT = TextFormat("html")
-MD_FMT = TextFormat("markdown")
+MD_FMT = TextFormat("plain")
 
 _fmt: TextFormat = HTML_FMT
 

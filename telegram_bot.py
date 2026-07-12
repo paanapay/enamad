@@ -117,7 +117,7 @@ PLATFORM_SPECS: dict[str, PlatformSpec] = {
         env_prefix="TELEGRAM",
         default_api_base_url=None,
         text_fmt=HTML_FMT,
-        **send_opts(),
+        parse_mode=ParseMode.HTML,
         link_preview_disabled=True,
         register_commands=True,
         display_name="Telegram",
@@ -312,10 +312,20 @@ async def track_interaction(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await asyncio.to_thread(_write)
 
 
+async def safe_answer(query, *args, **kwargs) -> None:
+    """Answer a callback query, ignoring platform quirks (e.g. Bale rejects
+    answerCallbackQuery with 'query is too old / invalid'). Never let a failed
+    ack crash the update handler."""
+    try:
+        await query.answer(*args, **kwargs)
+    except Exception as exc:
+        log.debug("callback answer failed: %s", exc)
+
+
 async def deny_access(update: Update) -> None:
     message = "⛔️ دسترسی به این ربات برای شما مجاز نیست."
     if update.callback_query:
-        await update.callback_query.answer(message, show_alert=True)
+        await safe_answer(update.callback_query, message, show_alert=True)
     elif update.message:
         await update.message.reply_text(message)
 
@@ -465,7 +475,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await deny_access(update)
         return
 
-    await query.answer()
+    await safe_answer(query)
     data = query.data
     app_config = get_app_config(context)
 
@@ -478,7 +488,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if data == "m:admin":
         if not is_admin(update, get_bot_config(context)):
-            await query.answer("⛔️ فقط مدیر", show_alert=True)
+            await safe_answer(query, "⛔️ فقط مدیر", show_alert=True)
             return
         with mysql_connection(app_config.mysql) as conn:
             user_stats = queries.get_bot_user_stats(conn)
@@ -491,7 +501,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if data.startswith("m:users:"):
         if not is_admin(update, get_bot_config(context)):
-            await query.answer("⛔️ فقط مدیر", show_alert=True)
+            await safe_answer(query, "⛔️ فقط مدیر", show_alert=True)
             return
         page = int(data.split(":")[-1])
         offset = page * PAGE_SIZE
@@ -524,7 +534,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if data == "m:stats":
         if not is_admin(update, get_bot_config(context)):
-            await query.answer("⛔️ فقط مدیر", show_alert=True)
+            await safe_answer(query, "⛔️ فقط مدیر", show_alert=True)
             return
         with mysql_connection(app_config.mysql) as conn:
             stats = queries.get_stats(conn)
