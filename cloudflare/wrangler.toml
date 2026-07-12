@@ -1,0 +1,10 @@
+name = "enamad-telegram-proxy"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# Bind the Worker to a subdomain of paanapay.com.
+# The paanapay.com zone must exist on this Cloudflare account; Cloudflare
+# creates the DNS record automatically for a custom-domain route.
+routes = [
+  { pattern = "tgapi.paanapay.com", custom_domain = true }
+]

@@ -251,6 +251,18 @@ def load_messenger_config(path: Path, platform: str) -> MessengerBotConfig:
     )
 
 
+def _derive_file_base_url(api_base_url: str) -> str | None:
+    """Derive the file-download base URL from a custom Bot API base URL.
+
+    e.g. https://host/bot -> https://host/file/bot
+    Keeps proxies (like a Cloudflare Worker) working for file downloads too.
+    """
+    base = api_base_url.rstrip("/")
+    if base.endswith("/bot"):
+        return base[: -len("/bot")] + "/file/bot"
+    return None
+
+
 def load_telegram_config(path: Path) -> MessengerBotConfig:
     return load_messenger_config(path, "telegram")
 
@@ -1083,6 +1095,9 @@ def build_application(config_path: Path, *, platform: str = "telegram") -> Appli
     )
     if bot_config.api_base_url:
         builder = builder.base_url(bot_config.api_base_url)
+        file_base_url = _derive_file_base_url(bot_config.api_base_url)
+        if file_base_url:
+            builder = builder.base_file_url(file_base_url)
         log.info("Using custom %s API: %s", spec.display_name, bot_config.api_base_url)
 
     application = builder.build()

@@ -78,6 +78,10 @@ def esc(value: Any) -> str:
     return _fmt.esc(value)
 
 
+def _num(value: Any) -> str:
+    return f"{int(value or 0):,}"
+
+
 def stars(rating: int) -> str:
     rating = max(0, min(5, int(rating or 0)))
     return "⭐" * rating + "☆" * (5 - rating)
@@ -128,10 +132,10 @@ def admin_panel_text(user_stats: dict) -> str:
     f = _fmt
     return (
         f"🛠 {f.bold('پنل مدیریت')}\n\n"
-        f"👥 کل کاربران: {f.bold(f'{user_stats.get('total', 0):,}')}\n"
-        f"🟢 فعال ۲۴ ساعت اخیر: {f.bold(f'{user_stats.get('active_1d', 0):,}')}\n"
-        f"📅 فعال ۷ روز اخیر: {f.bold(f'{user_stats.get('active_7d', 0):,}')}\n"
-        f"💬 مجموع تعاملات: {f.bold(f'{user_stats.get('interactions', 0):,}')}\n\n"
+        f"👥 کل کاربران: {f.bold(_num(user_stats.get('total', 0)))}\n"
+        f"🟢 فعال ۲۴ ساعت اخیر: {f.bold(_num(user_stats.get('active_1d', 0)))}\n"
+        f"📅 فعال ۷ روز اخیر: {f.bold(_num(user_stats.get('active_7d', 0)))}\n"
+        f"💬 مجموع تعاملات: {f.bold(_num(user_stats.get('interactions', 0)))}\n\n"
         "یک گزینه را انتخاب کنید 👇"
     )
 
@@ -242,8 +246,8 @@ def stats_text(stats: dict) -> str:
     last_major = stats.get("last_major_run")
     lines = [
         f"📊 {f.bold('آمار دیتابیس')}",
-        f"📦 کل دامنه‌ها: {f.bold(f'{stats.get('total', 0):,}')}",
-        f"⭐ دارای امتیاز: {f.bold(f'{stats.get('rated', 0):,}')}",
+        f"📦 کل دامنه‌ها: {f.bold(_num(stats.get('total', 0)))}",
+        f"⭐ دارای امتیاز: {f.bold(_num(stats.get('rated', 0)))}",
     ]
 
     total_pages = scrape.get("total_pages")
@@ -254,15 +258,15 @@ def stats_text(stats: dict) -> str:
         total_pages_int = int(total_pages)
         pct = effective_last * 100 // max(1, total_pages_int)
         lines.append(
-            f"📄 پیشرفت اسکرپ: {f.bold(f'{effective_last:,}')} / {total_pages_int:,} ({pct}%)"
+            f"📄 پیشرفت اسکرپ: {f.bold(_num(effective_last))} / {_num(total_pages_int)} ({pct}%)"
         )
         if distinct_pages and distinct_pages != effective_last:
             cover = distinct_pages * 100 // max(1, total_pages_int)
             lines.append(
-                f"📑 صفحات پوشش‌داده‌شده در DB: {f.bold(f'{distinct_pages:,}')} ({cover}%)"
+                f"📑 صفحات پوشش‌داده‌شده در DB: {f.bold(_num(distinct_pages))} ({cover}%)"
             )
     elif effective_last:
-        lines.append(f"📄 آخرین صفحه اسکرپ‌شده: {f.bold(f'{effective_last:,}')}")
+        lines.append(f"📄 آخرین صفحه اسکرپ‌شده: {f.bold(_num(effective_last))}")
 
     if stats.get("last_update"):
         lines.append(f"🕐 آخرین به‌روزرسانی: {fmt_date(stats['last_update'])}")
