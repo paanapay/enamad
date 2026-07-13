@@ -1,0 +1,22 @@
+# Local Windows/Mac override: host network does not publish ports on Docker Desktop.
+# The web container joins the default bridge and reaches MySQL via the published
+# host port (127.0.0.1:3307) through host.docker.internal.
+#
+# Local dev only needs mysql + web. Do NOT run bot/bale-bot/scheduler locally —
+# they poll the same Telegram/Bale tokens as production and cause getUpdates
+# "Conflict" errors.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d mysql web
+services:
+  web:
+    network_mode: bridge
+    ports:
+      - "127.0.0.1:8095:8095"
+    command: >
+      gunicorn --bind 0.0.0.0:8095 --workers 2 --timeout 120 webapp:app
+    environment:
+      MYSQL_HOST: host.docker.internal
+      MYSQL_PORT: "3307"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

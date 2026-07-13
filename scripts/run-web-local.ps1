@@ -35,7 +35,7 @@ if (-not $env:WEB_ADMIN_PASSWORD) {
 }
 
 $env:MYSQL_HOST = "127.0.0.1"
-$env:MYSQL_PORT = "3306"
+$env:MYSQL_PORT = "3307"
 $env:MYSQL_USER = "root"
 if (-not $env:MYSQL_PASSWORD) { $env:MYSQL_PASSWORD = "" }
 if (-not $env:MYSQL_DATABASE) { $env:MYSQL_DATABASE = "enamad" }
