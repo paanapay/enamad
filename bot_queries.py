@@ -279,6 +279,7 @@ def _build_domain_where(
     province: str = "",
     city: str = "",
     phone_type: str = "",
+    category: str = "",
     approve_from: str = "",
     approve_to: str = "",
     created_from: str = "",
@@ -290,6 +291,14 @@ def _build_domain_where(
     if province:
         where.append("province = %s")
         params.append(province)
+    # category = business service/permit title from enamad_domain_services.
+    if category:
+        where.append(
+            "EXISTS (SELECT 1 FROM enamad_domain_services s "
+            "WHERE s.enamad_id = enamad_domains.enamad_id "
+            "AND s.code = enamad_domains.code AND s.service_title = %s)"
+        )
+        params.append(category)
     if city:
         where.append("city = %s")
         params.append(city)
@@ -383,6 +392,23 @@ def get_province_cities(conn) -> list[dict]:
             """
         )
         return list(cursor.fetchall())
+
+
+def get_service_categories(conn, *, limit: int = 300) -> list[str]:
+    """Distinct service/permit titles, most common first, for a category filter."""
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT service_title
+            FROM enamad_domain_services
+            WHERE service_title IS NOT NULL AND service_title <> ''
+            GROUP BY service_title
+            ORDER BY COUNT(*) DESC, service_title ASC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        return [row["service_title"] for row in cursor.fetchall()]
 
 
 def get_provinces(conn, *, limit: int = 20) -> list[dict]:

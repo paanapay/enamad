@@ -207,6 +207,91 @@ tbody tr:hover {
   min-width: 150px;
 }
 
+/* ===== Searchable select (combobox) ===== */
+.ss {
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 150px;
+}
+
+.searchbar .ss {
+  min-width: 170px;
+}
+
+/* Category filter holds long service titles: give it (and its list) room. */
+.searchbar .ss.ss-wide {
+  flex: 1 1 320px;
+  min-width: 280px;
+}
+
+.ss.ss-wide .ss-panel {
+  min-width: 340px;
+}
+
+.ss.ss-wide .ss-option {
+  white-space: normal;
+}
+
+select.ss-native {
+  display: none !important;
+}
+
+.ss-input {
+  width: 100%;
+  min-width: 0 !important;
+  cursor: text;
+  padding: 11px 14px 11px 34px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%2364748b' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: left 12px center;
+  background-size: 12px 8px;
+}
+
+.ss.open .ss-input {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.15);
+}
+
+.ss-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  z-index: 50;
+  max-height: 260px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+  padding: 4px;
+}
+
+.ss-option {
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ss-option.active {
+  background: var(--panel2);
+}
+
+.ss-option.selected {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.ss-empty {
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .filter-field {
   display: inline-flex;
   align-items: center;
@@ -792,7 +877,7 @@ select {
   background-color: #fff;
   border: 1px solid var(--line);
   color: var(--text);
-  padding: 11px 40px 11px 14px;
+  padding: 11px 14px 11px 40px;
   border-radius: 10px;
   font-size: 14px;
   font-family: inherit;

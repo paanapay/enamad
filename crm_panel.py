@@ -28,6 +28,7 @@ from crm_db import (
     CRM_SETTINGS_KEYS,
     ROLE_ADMIN,
     ROLE_SUPER,
+    change_admin_password,
     create_admin,
     create_call_log,
     create_campaign,
@@ -54,6 +55,7 @@ from crm_db import (
     save_settings,
     save_template,
     update_admin,
+    verify_admin_password,
     count_message_logs,
     message_log_stats,
     iter_message_logs_for_export,
@@ -622,6 +624,32 @@ def admin_form(admin_id: int | None = None):
         if not row:
             abort(404)
     return render_template("crm/admin_form.html", row=row, roles=[ROLE_SUPER, ROLE_ADMIN])
+
+
+@crm_bp.route("/account/password", methods=["GET", "POST"])
+@login_required
+def change_password():
+    admin_id = session.get("admin_id")
+    if not admin_id:
+        abort(403)
+    if request.method == "POST":
+        current = request.form.get("current_password", "")
+        new = request.form.get("new_password", "")
+        confirm = request.form.get("confirm_password", "")
+        if len(new) < 6:
+            flash("رمز عبور جدید باید حداقل ۶ کاراکتر باشد.", "error")
+        elif new != confirm:
+            flash("رمز عبور جدید و تکرار آن یکسان نیستند.", "error")
+        else:
+            with mysql_connection(_config().mysql) as conn:
+                if not verify_admin_password(conn, admin_id, current):
+                    flash("رمز عبور فعلی نادرست است.", "error")
+                else:
+                    change_admin_password(conn, admin_id, new)
+                    conn.commit()
+                    flash("رمز عبور با موفقیت تغییر کرد.", "ok")
+                    return redirect(url_for("crm.change_password"))
+    return render_template("crm/change_password.html")
 
 
 @crm_bp.route("/preview", methods=["POST"])

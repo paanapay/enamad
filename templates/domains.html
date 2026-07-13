@@ -32,17 +32,24 @@
     <option value="top" {{ 'selected' if sort=='top' }}>برترین امتیاز</option>
   </select>
 
-  <select name="province" id="f-province">
+  <select name="province" id="f-province" data-searchable data-placeholder="جستجوی استان…">
     <option value="">همه استان‌ها</option>
     {% for p in provinces %}
     <option value="{{ p }}" {{ 'selected' if province==p }}>{{ p }}</option>
     {% endfor %}
   </select>
 
-  <select name="city" id="f-city" data-selected="{{ city }}">
+  <select name="city" id="f-city" data-selected="{{ city }}" data-searchable data-placeholder="جستجوی شهر…">
     <option value="">همه شهرها</option>
     {% for row in province_cities %}
     <option value="{{ row.city }}" data-province="{{ row.province }}" {{ 'selected' if city==row.city }}>{{ row.city }}</option>
+    {% endfor %}
+  </select>
+
+  <select name="category" title="دسته‌بندی (خدمات / مجوزها)" data-searchable data-ss-class="ss-wide" data-placeholder="جستجوی دسته‌بندی…">
+    <option value="">همه دسته‌بندی‌ها</option>
+    {% for c in categories %}
+    <option value="{{ c }}" {{ 'selected' if category==c }}>{{ c }}</option>
     {% endfor %}
   </select>
 
@@ -141,7 +148,11 @@
           opt.disabled = !match;
           if (match && opt.value === current) { stillValid = true; }
         });
-        if (!stillValid) { cityEl.value = ''; }
+        if (!stillValid && cityEl.value !== '') {
+          cityEl.value = '';
+          // Refresh the searchable-combobox label mirroring this select.
+          cityEl.dispatchEvent(new Event('change', { bubbles: true }));
+        }
       };
       applyProvince(true);
       provinceEl.addEventListener('change', function () { applyProvince(false); });

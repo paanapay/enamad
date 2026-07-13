@@ -431,6 +431,27 @@ def get_admin_by_id(conn, admin_id: int) -> dict | None:
         return cursor.fetchone()
 
 
+def verify_admin_password(conn, admin_id: int, password: str) -> bool:
+    """Check a plaintext password against the stored hash for one admin."""
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "SELECT password_hash FROM admin_users WHERE id = %s AND is_active = 1",
+            (admin_id,),
+        )
+        row = cursor.fetchone()
+    if not row or not row.get("password_hash"):
+        return False
+    return check_password_hash(row["password_hash"], password)
+
+
+def change_admin_password(conn, admin_id: int, new_password: str) -> None:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "UPDATE admin_users SET password_hash = %s WHERE id = %s",
+            (generate_password_hash(new_password), admin_id),
+        )
+
+
 def _parse_json_field(value) -> dict:
     if not value:
         return {}
