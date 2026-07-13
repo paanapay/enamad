@@ -1,0 +1,17 @@
+# Windows-only local override for Docker Desktop.
+#   docker compose -f docker-compose.yml -f docker-compose.windows.yml up -d web
+#
+# On Docker Desktop (Windows), network_mode: host binds inside the Linux VM,
+# so 127.0.0.1:8095 is unreachable from Windows. Here we publish the port and
+# reach MySQL (published on the host at 127.0.0.1:3307) via host.docker.internal.
+services:
+  web:
+    network_mode: bridge
+    command: >
+      gunicorn --bind 0.0.0.0:8095 --workers 2 --timeout 120 webapp:app
+    ports:
+      - "127.0.0.1:8095:8095"
+    environment:
+      MYSQL_HOST: host.docker.internal
+      MYSQL_PORT: "3307"
+    depends_on: !reset []
