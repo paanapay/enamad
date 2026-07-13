@@ -21,7 +21,7 @@ from flask import (
 import bot_queries as q
 from cache_utils import cached
 from crm_db import ROLE_SUPER, authenticate_admin, ensure_crm_tables, CALL_OUTCOMES
-from jalali_utils import format_jdate, format_jdatetime
+from jalali_utils import format_jdate, format_jdatetime, is_jalali_date
 from crm_panel import crm_bp
 from db import ensure_domain_detail_columns, ensure_domain_indexes, load_config, mysql_connection
 
@@ -139,6 +139,19 @@ def call_outcome_filter(value):
     return CALL_OUTCOMES.get(value or "", value or "—")
 
 
+def _greg_to_jalali(value: str) -> str:
+    """Convert a gregorian ISO date (yyyy-mm-dd) to an ascii Jalali string.
+
+    Returns "" for empty or unparseable input so tampered values can't leak
+    into the SQL filter.
+    """
+    value = (value or "").strip()
+    if not value:
+        return ""
+    jalali = format_jdate(value)
+    return jalali if is_jalali_date(jalali) else ""
+
+
 @app.template_filter("jdate")
 def jdate_filter(value):
     return format_jdate(value)
@@ -231,7 +244,29 @@ def dashboard():
 def domains():
     query = (request.args.get("q") or "").strip()
     sort = request.args.get("sort", "latest")
+    if sort not in q.DOMAIN_SORTS:
+        sort = "latest"
     phone_type = (request.args.get("phone_type") or "").strip()
+    province = (request.args.get("province") or "").strip()
+    city = (request.args.get("city") or "").strip()
+
+    # Date inputs arrive as gregorian ISO (yyyy-mm-dd) from the Jalali picker.
+    approve_from_raw = (request.args.get("approve_from") or "").strip()
+    approve_to_raw = (request.args.get("approve_to") or "").strip()
+    created_from = (request.args.get("created_from") or "").strip()
+    created_to = (request.args.get("created_to") or "").strip()
+
+    filters = {
+        "province": province,
+        "city": city,
+        "phone_type": phone_type,
+        # approve_date is stored as Jalali, so convert bounds to Jalali strings.
+        "approve_from": _greg_to_jalali(approve_from_raw),
+        "approve_to": _greg_to_jalali(approve_to_raw),
+        "created_from": created_from,
+        "created_to": created_to,
+    }
+
     try:
         page = max(0, int(request.args.get("page", 0)))
     except ValueError:
@@ -239,26 +274,40 @@ def domains():
     offset = page * PAGE_SIZE
 
     with mysql_connection(app_config().mysql) as conn:
+        provinces = q.get_all_provinces(conn)
+        province_cities = q.get_province_cities(conn)
         if query:
             rows = q.search_domains(conn, query, limit=PAGE_SIZE)
             total = q.count_search(conn, query)
             page = 0
-        elif phone_type:
-            rows = q.get_domains_by_phone_type(conn, phone_type, offset=offset, limit=PAGE_SIZE)
-            total = q.count_by_phone_type(conn, phone_type)
-            sort = "phone"
-        elif sort == "top":
-            rows = q.get_top_rated(conn, offset=offset, limit=PAGE_SIZE)
-            total = q.count_top_rated(conn)
-        elif sort == "approve":
-            rows = q.get_newest_by_approve(conn, offset=offset, limit=PAGE_SIZE)
-            total = q.count_with_approve(conn)
         else:
-            sort = "latest"
-            rows = q.get_latest_domains(conn, offset=offset, limit=PAGE_SIZE)
-            total = q.count_domains(conn)
+            rows = q.get_domains_filtered(
+                conn, filters=filters, sort=sort, offset=offset, limit=PAGE_SIZE
+            )
+            total = q.count_domains_filtered(conn, filters=filters, sort=sort)
 
     pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
+
+    # Args to carry across pagination links (drop empties + page).
+    filter_args = {
+        k: v
+        for k, v in {
+            "q": query,
+            "sort": sort,
+            "phone_type": phone_type,
+            "province": province,
+            "city": city,
+            "approve_from": approve_from_raw,
+            "approve_to": approve_to_raw,
+            "created_from": created_from,
+            "created_to": created_to,
+        }.items()
+        if v
+    }
+    has_filters = any(
+        [phone_type, province, city, approve_from_raw, approve_to_raw,
+         created_from, created_to]
+    )
     return render_template(
         "domains.html",
         rows=rows,
@@ -268,6 +317,20 @@ def domains():
         sort=sort,
         query=query,
         phone_type=phone_type,
+        province=province,
+        city=city,
+        provinces=provinces,
+        province_cities=province_cities,
+        approve_from=approve_from_raw,
+        approve_to=approve_to_raw,
+        approve_from_disp=_greg_to_jalali(approve_from_raw),
+        approve_to_disp=_greg_to_jalali(approve_to_raw),
+        created_from=created_from,
+        created_to=created_to,
+        created_from_disp=_greg_to_jalali(created_from),
+        created_to_disp=_greg_to_jalali(created_to),
+        filter_args=filter_args,
+        has_filters=has_filters,
         page_size=PAGE_SIZE,
     )
 

@@ -199,6 +199,41 @@ tbody tr:hover {
   gap: 8px;
   margin-bottom: 16px;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.searchbar select {
+  flex: 0 1 auto;
+  min-width: 150px;
+}
+
+.filter-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 2px 4px 2px 10px;
+}
+
+.filter-field label {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.filter-field input[type="text"] {
+  flex: 0 0 auto;
+  min-width: 0;
+  width: 120px;
+  border: none;
+  background: transparent;
+  padding: 9px 6px;
+}
+
+.filter-field input[type="text"]:focus {
+  box-shadow: none;
 }
 
 input[type="text"],

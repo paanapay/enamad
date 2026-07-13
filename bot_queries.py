@@ -266,6 +266,125 @@ def count_search(conn, query: str) -> int:
         return int(cursor.fetchone()["c"])
 
 
+DOMAIN_SORTS = {
+    "latest": "source_page ASC, source_row ASC, id ASC",
+    "approve": "approve_date DESC, id DESC",
+    "top": "rating DESC, updated_at DESC",
+    "newest": "created_at DESC, id DESC",
+}
+
+
+def _build_domain_where(
+    *,
+    province: str = "",
+    city: str = "",
+    phone_type: str = "",
+    approve_from: str = "",
+    approve_to: str = "",
+    created_from: str = "",
+    created_to: str = "",
+) -> tuple[list[str], list[Any]]:
+    """Build a list of WHERE conditions + params from optional filters."""
+    where: list[str] = []
+    params: list[Any] = []
+    if province:
+        where.append("province = %s")
+        params.append(province)
+    if city:
+        where.append("city = %s")
+        params.append(city)
+    if phone_type == "mobile":
+        where.append("phone_type IN ('mobile', 'mixed')")
+    elif phone_type:
+        where.append("phone_type = %s")
+        params.append(phone_type)
+    # approve_date is stored as a zero-padded ascii Jalali string (YYYY/MM/DD),
+    # so lexicographic comparison matches chronological order.
+    if approve_from:
+        where.append("approve_date >= %s")
+        params.append(approve_from)
+    if approve_to:
+        where.append("approve_date <= %s")
+        params.append(approve_to)
+    # created_at is a gregorian TIMESTAMP; compare against ISO date bounds.
+    if created_from:
+        where.append("created_at >= %s")
+        params.append(created_from)
+    if created_to:
+        where.append("created_at < DATE_ADD(%s, INTERVAL 1 DAY)")
+        params.append(created_to)
+    return where, params
+
+
+def get_domains_filtered(
+    conn, *, filters: dict, sort: str = "latest", offset: int = 0, limit: int = 50
+) -> list[dict]:
+    where, params = _build_domain_where(**filters)
+    if sort == "approve":
+        where.append("approve_date IS NOT NULL AND approve_date <> ''")
+    if sort == "top":
+        where.append("rating >= 4")
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+    order = DOMAIN_SORTS.get(sort, DOMAIN_SORTS["latest"])
+    with conn.cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT {DOMAIN_FIELDS}
+            FROM enamad_domains
+            {clause}
+            ORDER BY {order}
+            LIMIT %s OFFSET %s
+            """,
+            (*params, limit, offset),
+        )
+        return list(cursor.fetchall())
+
+
+def count_domains_filtered(conn, *, filters: dict, sort: str = "latest") -> int:
+    where, params = _build_domain_where(**filters)
+    if sort == "approve":
+        where.append("approve_date IS NOT NULL AND approve_date <> ''")
+    if sort == "top":
+        where.append("rating >= 4")
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+    with conn.cursor() as cursor:
+        cursor.execute(
+            f"SELECT COUNT(*) AS c FROM enamad_domains {clause}",
+            tuple(params),
+        )
+        return int(cursor.fetchone()["c"])
+
+
+def get_all_provinces(conn) -> list[str]:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT province
+            FROM enamad_domains
+            WHERE province IS NOT NULL AND province <> ''
+            GROUP BY province
+            ORDER BY province ASC
+            """
+        )
+        return [row["province"] for row in cursor.fetchall()]
+
+
+def get_province_cities(conn) -> list[dict]:
+    """Distinct (province, city) pairs, for a dependent city dropdown."""
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT province, city
+            FROM enamad_domains
+            WHERE city IS NOT NULL AND city <> ''
+              AND province IS NOT NULL AND province <> ''
+            GROUP BY province, city
+            ORDER BY province ASC, city ASC
+            """
+        )
+        return list(cursor.fetchall())
+
+
 def get_provinces(conn, *, limit: int = 20) -> list[dict]:
     with conn.cursor() as cursor:
         cursor.execute(

@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% set active = 'domains' %}
 {% block title %}دامنه‌ها{% endblock %}
-{% macro pager(sort, query, page, pages, phone_type) %}
+{% macro pager(args, page, pages) %}
 <div class="pager">
   {% if page > 0 %}
-    <a href="{{ url_for('domains', sort=sort, q=query, phone_type=phone_type, page=page-1) }}">‹ قبلی</a>
+    <a href="{{ url_for('domains', page=page-1, **args) }}">‹ قبلی</a>
   {% else %}<span class="disabled">‹ قبلی</span>{% endif %}
   <span>صفحه {{ (page+1)|group }} از {{ (pages if pages else 1)|group }}</span>
   {% if page + 1 < pages %}
-    <a href="{{ url_for('domains', sort=sort, q=query, phone_type=phone_type, page=page+1) }}">بعدی ›</a>
+    <a href="{{ url_for('domains', page=page+1, **args) }}">بعدی ›</a>
   {% else %}<span class="disabled">بعدی ›</span>{% endif %}
 </div>
 {% endmacro %}
@@ -17,28 +17,73 @@
 
 <form class="searchbar" method="get" action="{{ url_for('domains') }}">
   <input type="search" name="q" value="{{ query }}" placeholder="جستجو: دامنه، نام کسب‌وکار یا مالک…">
+
   <select name="phone_type">
     <option value="">همه تلفن‌ها</option>
     <option value="mobile" {{ 'selected' if phone_type=='mobile' }}>موبایل</option>
     <option value="landline" {{ 'selected' if phone_type=='landline' }}>ثابت</option>
     <option value="mixed" {{ 'selected' if phone_type=='mixed' }}>موبایل+ثابت</option>
   </select>
-  <button class="btn" type="submit">جستجو</button>
-  {% if query or phone_type %}<a class="btn ghost" href="{{ url_for('domains') }}">حذف فیلتر</a>{% endif %}
-</form>
 
-{% if not query and not phone_type %}
-<div class="tabs">
-  <a href="{{ url_for('domains', sort='latest') }}" class="{{ 'active' if sort=='latest' }}">ترتیب سایت</a>
-  <a href="{{ url_for('domains', sort='approve') }}" class="{{ 'active' if sort=='approve' }}">جدیدترین صدور</a>
-  <a href="{{ url_for('domains', sort='top') }}" class="{{ 'active' if sort=='top' }}">برترین امتیاز</a>
-</div>
-{% endif %}
+  <select name="sort" title="دسته‌بندی / مرتب‌سازی">
+    <option value="latest" {{ 'selected' if sort=='latest' }}>ترتیب سایت</option>
+    <option value="newest" {{ 'selected' if sort=='newest' }}>جدیدترین ثبت</option>
+    <option value="approve" {{ 'selected' if sort=='approve' }}>جدیدترین صدور</option>
+    <option value="top" {{ 'selected' if sort=='top' }}>برترین امتیاز</option>
+  </select>
+
+  <select name="province" id="f-province">
+    <option value="">همه استان‌ها</option>
+    {% for p in provinces %}
+    <option value="{{ p }}" {{ 'selected' if province==p }}>{{ p }}</option>
+    {% endfor %}
+  </select>
+
+  <select name="city" id="f-city" data-selected="{{ city }}">
+    <option value="">همه شهرها</option>
+    {% for row in province_cities %}
+    <option value="{{ row.city }}" data-province="{{ row.province }}" {{ 'selected' if city==row.city }}>{{ row.city }}</option>
+    {% endfor %}
+  </select>
+
+  <span class="filter-field">
+    <label>تاریخ صدور از</label>
+    <input type="text" data-jdp data-jdp-only-date
+           data-jdp-target-value-input="#approve_from_g" data-jdp-target-value-type="gregorian"
+           value="{{ approve_from_disp }}" placeholder="۱۴۰۳/۰۱/۰۱" autocomplete="off">
+    <input type="hidden" name="approve_from" id="approve_from_g" value="{{ approve_from }}">
+  </span>
+  <span class="filter-field">
+    <label>تا</label>
+    <input type="text" data-jdp data-jdp-only-date
+           data-jdp-target-value-input="#approve_to_g" data-jdp-target-value-type="gregorian"
+           value="{{ approve_to_disp }}" placeholder="۱۴۰۳/۱۲/۲۹" autocomplete="off">
+    <input type="hidden" name="approve_to" id="approve_to_g" value="{{ approve_to }}">
+  </span>
+
+  <span class="filter-field">
+    <label>تاریخ ثبت از</label>
+    <input type="text" data-jdp data-jdp-only-date
+           data-jdp-target-value-input="#created_from_g" data-jdp-target-value-type="gregorian"
+           value="{{ created_from_disp }}" placeholder="۱۴۰۳/۰۱/۰۱" autocomplete="off">
+    <input type="hidden" name="created_from" id="created_from_g" value="{{ created_from }}">
+  </span>
+  <span class="filter-field">
+    <label>تا</label>
+    <input type="text" data-jdp data-jdp-only-date
+           data-jdp-target-value-input="#created_to_g" data-jdp-target-value-type="gregorian"
+           value="{{ created_to_disp }}" placeholder="۱۴۰۳/۱۲/۲۹" autocomplete="off">
+    <input type="hidden" name="created_to" id="created_to_g" value="{{ created_to }}">
+  </span>
+
+  <button class="btn" type="submit">اعمال فیلتر</button>
+  {% if query or has_filters %}<a class="btn ghost" href="{{ url_for('domains') }}">حذف فیلتر</a>{% endif %}
+</form>
 
 <div class="panel" style="padding:0;overflow:auto">
   <table>
     <thead>
-      <tr><th>دامنه</th><th>کسب‌وکار</th><th>تلفن</th><th>نوع</th><th>وضعیت اینماد</th><th>استان / شهر</th><th>امتیاز</th><th></th></tr>
+      <tr><th>دامنه</th><th>کسب‌وکار</th><th>تلفن</th><th>نوع</th><th>وضعیت اینماد</th><th>استان / شهر</th><th>تاریخ صدور</th><th>امتیاز</th><th></th></tr>
     </thead>
     <tbody>
       {% for d in rows %}
@@ -55,15 +100,52 @@
           {% endif %}
         </td>
         <td>{{ d.province or '—' }}{% if d.city %} — {{ d.city }}{% endif %}</td>
+        <td class="mono">{{ d.approve_date|jdate }}</td>
         <td class="stars">{{ d.rating|stars }}</td>
         <td><a href="{{ url_for('domain_detail', domain_id=d.id) }}">جزئیات ›</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="empty">موردی یافت نشد.</td></tr>
+      <tr><td colspan="9" class="empty">موردی یافت نشد.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
 
-{% if not query %}{{ pager(sort, query, page, pages, phone_type) }}{% endif %}
+{% if not query %}{{ pager(filter_args, page, pages) }}{% endif %}
+{% endblock %}
+{% block scripts %}
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/jalalidatepicker/jalalidatepicker.min.css') }}">
+<script src="{{ url_for('static', filename='vendor/jalalidatepicker/jalalidatepicker.min.js') }}"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    if (window.jalaliDatepicker) {
+      jalaliDatepicker.startWatch({
+        persianDigits: true,
+        targetValueInput: 'attr',
+        targetValueType: 'attr',
+      });
+    }
+
+    // Dependent city dropdown: show only cities in the selected province.
+    var provinceEl = document.getElementById('f-province');
+    var cityEl = document.getElementById('f-city');
+    if (provinceEl && cityEl) {
+      var options = Array.prototype.slice.call(cityEl.querySelectorAll('option[data-province]'));
+      var applyProvince = function (keepValue) {
+        var prov = provinceEl.value;
+        var current = keepValue ? cityEl.value : '';
+        var stillValid = false;
+        options.forEach(function (opt) {
+          var match = !prov || opt.getAttribute('data-province') === prov;
+          opt.hidden = !match;
+          opt.disabled = !match;
+          if (match && opt.value === current) { stillValid = true; }
+        });
+        if (!stillValid) { cityEl.value = ''; }
+      };
+      applyProvince(true);
+      provinceEl.addEventListener('change', function () { applyProvince(false); });
+    }
+  });
+</script>
 {% endblock %}
