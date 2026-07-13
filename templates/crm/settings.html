@@ -6,6 +6,19 @@
 <h1>تنظیمات پیامک و ایمیل</h1>
 
 <form method="post" class="panel">
+  <div class="testmode-box {{ 'on' if settings.dry_run == 'yes' }}">
+    <label style="display:flex;align-items:center;gap:10px;font-weight:700;margin:0">
+      <input type="checkbox" name="dry_run" value="on" {{ 'checked' if settings.dry_run == 'yes' }} style="width:auto;min-width:0;flex:0">
+      🧪 حالت آزمایشی (Dry-run)
+    </label>
+    <p class="muted" style="margin:8px 0 0">
+      وقتی روشن باشد، ساخت قالب و کمپین و اجرای آن‌ها کار می‌کند اما هیچ پیامک یا
+      ایمیل واقعی ارسال نمی‌شود؛ پیام‌ها فقط با وضعیت «آزمایشی» در
+      <a href="{{ url_for('crm.message_logs', status='test') }}">گزارش ارسال‌ها</a>
+      ثبت می‌شوند. برای چند روز تست بدون هزینه و بدون ارسال واقعی، این گزینه را روشن نگه دارید.
+    </p>
+  </div>
+
   <h2>کاوه‌نگار (پیامک)</h2>
   <p class="muted">الگوها را در <a href="https://panel.kavenegar.com/client/verify/lookup" target="_blank" rel="noopener">پنل کاوه‌نگار</a> تعریف کنید و نام الگو را در قالب‌ها وارد کنید.</p>
   <div class="form-row">

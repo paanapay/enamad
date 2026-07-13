@@ -14,6 +14,7 @@ from crm_db import (
     get_domains_by_ids,
     get_template,
     insert_message_log,
+    is_dry_run,
     update_campaign_counts,
 )
 from email_sender import EmailConfig, EmailSendError, send_email
@@ -89,6 +90,27 @@ def send_sms_to_domain(
         return {"status": "failed", "reason": "no_template_name"}
 
     tokens = build_kavenegar_tokens(template, domain_row)
+
+    if is_dry_run(settings):
+        token_preview = "، ".join(
+            f"{k}={v}" for k, v in tokens.items() if v
+        )
+        insert_message_log(
+            conn,
+            {
+                **base_log,
+                "recipient": mobile,
+                "recipient_type": "mobile",
+                "status": "test",
+                "error_message": (
+                    f"[آزمایشی] الگو: {template['kavenegar_template']}"
+                    + (f" | {token_preview}" if token_preview else "")
+                ),
+                "sent_at": _now(),
+            },
+        )
+        return {"status": "test"}
+
     client = KavenegarClient(settings.get("kavenegar_api_key", ""))
     try:
         result = client.lookup(
@@ -162,6 +184,24 @@ def send_email_to_domain(
 
     subject = render_text_template(template.get("email_subject") or "", context)
     body = render_text_template(template.get("email_body") or "", context)
+
+    if is_dry_run(settings):
+        preview = body.strip().replace("\n", " ")
+        if len(preview) > 160:
+            preview = preview[:160] + "…"
+        insert_message_log(
+            conn,
+            {
+                **base_log,
+                "recipient": email,
+                "recipient_type": "email",
+                "status": "test",
+                "error_message": f"[آزمایشی] موضوع: {subject} | {preview}",
+                "sent_at": _now(),
+            },
+        )
+        return {"status": "test"}
+
     config = EmailConfig.from_settings(settings)
 
     try:
@@ -252,7 +292,9 @@ def run_campaign(conn, campaign_id: int) -> dict[str, int]:
             settings=settings,
         )
         status = result.get("status")
-        if status == "sent":
+        # In test mode messages get a "test" status; count them as processed
+        # (sent bucket) so the campaign completes normally.
+        if status in ("sent", "test"):
             counts["sent"] += 1
         elif status == "skipped":
             counts["skipped"] += 1

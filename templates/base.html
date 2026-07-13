@@ -29,6 +29,16 @@
   </header>
   {% endif %}
   <main>
+    {% if crm_test_mode %}
+    <div class="testbar">
+      🧪 حالت آزمایشی فعال است — هیچ پیامک یا ایمیل واقعی ارسال نمی‌شود؛ فقط در
+      <a href="{{ url_for('crm.message_logs', status='test') }}">گزارش ارسال‌ها</a>
+      ثبت می‌گردد.
+      {% if current_admin.is_super %}
+      <a href="{{ url_for('crm.settings') }}">تغییر تنظیمات</a>
+      {% endif %}
+    </div>
+    {% endif %}
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for cat, msg in messages %}
         <div class="flash {{ cat }}">{{ msg }}</div>

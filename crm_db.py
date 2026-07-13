@@ -28,7 +28,14 @@ CRM_SETTINGS_KEYS = (
     "smtp_password",
     "smtp_from",
     "smtp_tls",
+    # "yes" = test/dry-run mode: nothing is really sent; messages are only logged.
+    "dry_run",
 )
+
+
+def is_dry_run(settings: dict[str, str] | None) -> bool:
+    """True when CRM test mode is on (no real SMS/email leaves the system)."""
+    return bool(settings) and str(settings.get("dry_run") or "").lower() == "yes"
 
 CALL_OUTCOMES = {
     "not_called": "تماس نگرفته",
@@ -838,8 +845,8 @@ def message_log_stats(
     """
     stats = {
         "total": 0,
-        "sms": {"total": 0, "sent": 0, "failed": 0, "skipped": 0, "pending": 0},
-        "email": {"total": 0, "sent": 0, "failed": 0, "skipped": 0, "pending": 0},
+        "sms": {"total": 0, "sent": 0, "failed": 0, "skipped": 0, "pending": 0, "test": 0},
+        "email": {"total": 0, "sent": 0, "failed": 0, "skipped": 0, "pending": 0, "test": 0},
     }
     with conn.cursor() as cursor:
         cursor.execute(sql, params)

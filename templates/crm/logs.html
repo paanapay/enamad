@@ -11,14 +11,14 @@
     <div class="num">{{ stats.sms.sent|group }}</div>
     <div class="lbl">پیامک موفق</div>
     <div class="muted" style="font-size:12px;margin-top:4px">
-      ناموفق {{ stats.sms.failed|group }} · رد {{ stats.sms.skipped|group }}
+      آزمایشی {{ stats.sms.test|group }} · ناموفق {{ stats.sms.failed|group }} · رد {{ stats.sms.skipped|group }}
     </div>
   </div>
   <div class="card stat">
     <div class="num">{{ stats.email.sent|group }}</div>
     <div class="lbl">ایمیل موفق</div>
     <div class="muted" style="font-size:12px;margin-top:4px">
-      ناموفق {{ stats.email.failed|group }} · رد {{ stats.email.skipped|group }}
+      آزمایشی {{ stats.email.test|group }} · ناموفق {{ stats.email.failed|group }} · رد {{ stats.email.skipped|group }}
     </div>
   </div>
   <div class="card stat">
@@ -74,7 +74,7 @@
         <td class="mono">{{ (l.sent_at or l.created_at)|jdatetime }}</td>
         <td>{{ channels.get(l.channel, l.channel) }}</td>
         <td>
-          <span class="badge {{ 'ok' if l.status=='sent' else ('no' if l.status=='failed' else 'muted') }}">
+          <span class="badge {{ 'ok' if l.status=='sent' else ('test' if l.status=='test' else ('no' if l.status=='failed' else 'muted')) }}">
             {{ statuses.get(l.status, l.status) }}
           </span>
         </td>

@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from functools import wraps
 
-from cache_utils import cached
+from cache_utils import cached, invalidate
 from flask import (
     Blueprint,
     abort,
@@ -44,6 +44,7 @@ from crm_db import (
     get_call_logs_for_domain,
     get_latest_call_for_domain,
     get_template,
+    is_dry_run,
     list_admins,
     list_automation_rules,
     list_call_logs,
@@ -119,10 +120,24 @@ def _current_admin() -> dict:
     }
 
 
+def _test_mode_enabled() -> bool:
+    def produce():
+        with mysql_connection(_config().mysql) as conn:
+            return is_dry_run(get_all_settings(conn))
+
+    try:
+        return bool(cached("crm_dry_run", 30, produce))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 @crm_bp.app_context_processor
 def inject_admin():
     if session.get("admin_id"):
-        return {"current_admin": _current_admin()}
+        return {
+            "current_admin": _current_admin(),
+            "crm_test_mode": _test_mode_enabled(),
+        }
     return {}
 
 
@@ -147,9 +162,11 @@ def settings():
     if request.method == "POST":
         data = {key: request.form.get(key, "") for key in CRM_SETTINGS_KEYS}
         data["smtp_tls"] = "yes" if request.form.get("smtp_tls") == "on" else "no"
+        data["dry_run"] = "yes" if request.form.get("dry_run") == "on" else "no"
         with mysql_connection(_config().mysql) as conn:
             save_settings(conn, data)
             conn.commit()
+        invalidate("crm_dry_run")
         flash("تنظیمات ذخیره شد.", "ok")
         return redirect(url_for("crm.settings"))
 
@@ -409,6 +426,7 @@ def campaign_detail(campaign_id: int):
 _LOG_CHANNELS = {"sms": "پیامک", "email": "ایمیل"}
 _LOG_STATUSES = {
     "sent": "ارسال موفق",
+    "test": "آزمایشی",
     "failed": "ناموفق",
     "skipped": "رد شده",
     "pending": "در انتظار",

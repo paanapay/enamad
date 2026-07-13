@@ -423,6 +423,41 @@ input:focus {
   font-weight: 600;
 }
 
+.badge.test {
+  background: rgba(217, 119, 6, 0.14);
+  color: #b45309;
+}
+
+/* Test-mode (dry-run) banner + settings toggle */
+.testbar {
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  color: #92400e;
+  padding: 10px 16px;
+  border-radius: 10px;
+  margin-bottom: 16px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.testbar a {
+  color: #b45309;
+  text-decoration: underline;
+}
+
+.testmode-box {
+  background: var(--panel2);
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 22px;
+}
+
+.testmode-box.on {
+  background: #fffbeb;
+  border-color: #fcd34d;
+}
+
 .kv {
   display: grid;
   grid-template-columns: 150px 1fr;
