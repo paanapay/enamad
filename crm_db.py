@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 from typing import Any
 
@@ -1011,6 +1012,22 @@ def get_active_rules_for_trigger(conn, trigger_type: str) -> list[dict]:
     return rows
 
 
+def _sanitize_kavenegar_token(value: str, *, allow_spaces: bool = False) -> str:
+    """Kavenegar token/token2/token3 reject spaces, newlines and underscores.
+
+    token10/token20 allow a few spaces. We normalize invalid characters so
+    common values like owner names ("فرشاد محمدی") still send successfully.
+    """
+    text = str(value or "").strip()
+    text = text.replace("\r", " ").replace("\n", " ").replace("_", "-")
+    if allow_spaces:
+        # Collapse repeated spaces; token10 allows a limited number.
+        text = re.sub(r"\s+", " ", text).strip()
+    else:
+        text = re.sub(r"\s+", "", text)
+    return (text or "-")[:100]
+
+
 def build_kavenegar_tokens(template: dict, domain_row: dict) -> dict[str, str]:
     mapping = _parse_json_field(template.get("token_mapping"))
     context = build_template_context(domain_row)
@@ -1018,9 +1035,14 @@ def build_kavenegar_tokens(template: dict, domain_row: dict) -> dict[str, str]:
     for kn_token in KAVENEGAR_TOKENS:
         var_name = mapping.get(kn_token, "")
         if var_name:
-            tokens[kn_token] = str(context.get(var_name) or "-")[:100]
+            raw = str(context.get(var_name) or "-")
+            tokens[kn_token] = _sanitize_kavenegar_token(
+                raw, allow_spaces=kn_token in ("token10", "token20")
+            )
     if not tokens.get("token"):
-        tokens["token"] = str(context.get("domain") or "-")[:100]
+        tokens["token"] = _sanitize_kavenegar_token(
+            str(context.get("domain") or "-"), allow_spaces=False
+        )
     return tokens
 
 
