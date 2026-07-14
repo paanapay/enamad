@@ -106,12 +106,28 @@
         <h2 style="margin:0">پیش‌نمایش زنده</h2>
       </div>
       <div class="preview-source">
-        <label class="muted" style="font-size:12px">داده پیش‌نمایش</label>
+        <label class="muted" style="font-size:12px">داده پیش‌نمایش / ارسال تستی</label>
         <div class="source-row">
           <input type="text" id="preview-domain" placeholder="دامنه یا شناسه دامنه (خالی = نمونه)" style="flex:1">
           <button type="button" class="btn ghost" id="load-domain-btn">بارگذاری</button>
         </div>
         <div class="muted" id="source-label" style="font-size:12px;margin-top:6px">در حال استفاده از داده نمونه</div>
+        <div class="test-send-box" id="test-send-box">
+          <div class="muted" style="font-size:12px;margin-bottom:6px">
+            گیرنده از دامنه: <span class="mono" id="test-recipient">—</span>
+          </div>
+          <div class="source-row" style="margin-bottom:8px">
+            <input type="text" id="override-recipient" dir="ltr"
+                   placeholder="اختیاری: شماره/ایمیل دیگر برای تست"
+                   style="flex:1;min-width:0">
+          </div>
+          <button type="button" class="btn" id="test-send-btn" style="width:100%">ارسال تستی واقعی</button>
+          <div class="hint muted" style="margin-top:8px">
+            متغیرها از دامنه بالا پر می‌شوند و پیام واقعی به گیرنده می‌رود
+            (حتی اگر حالت آزمایشی روشن باشد). برای تست روی خودتان، دامنه‌ای با شماره/ایمیل خودتان را بارگذاری کنید.
+          </div>
+          <div id="test-send-result" style="margin-top:8px;font-size:13px"></div>
+        </div>
       </div>
 
       <!-- SMS preview: phone mockup -->
@@ -150,7 +166,10 @@
 <script id="sample-context" type="application/json">{{ sample_context|tojson }}</script>
 <script>
 let previewContext = JSON.parse(document.getElementById('sample-context').textContent);
+let previewSourceIsDomain = false;
 const KN_TOKENS = {{ kavenegar_tokens|tojson }};
+const TEMPLATE_ID = {{ row.id if row else 'null' }};
+const TEST_SEND_URL = {{ url_for('crm.template_test_send')|tojson }};
 
 function esc(s) {
   return String(s == null ? '' : s)
@@ -259,10 +278,22 @@ function renderSmsChips() {
   }
 }
 
+function updateTestRecipient() {
+  const ch = document.getElementById('channel-select').value;
+  const el = document.getElementById('test-recipient');
+  if (!el) return;
+  if (ch === 'sms') {
+    el.textContent = previewContext.mobile_phone || previewContext.phone || '— (موبایل ندارد)';
+  } else {
+    el.textContent = previewContext.email_normalized || previewContext.email || '— (ایمیل ندارد)';
+  }
+}
+
 function renderPreview() {
   const ch = document.getElementById('channel-select').value;
   if (ch === 'sms') { renderSmsChips(); renderSmsPreview(); }
   else renderEmailPreview();
+  updateTestRecipient();
 }
 
 function onChannelChange() {
@@ -360,8 +391,12 @@ function loadPreviewData(query) {
     .then(r => r.json())
     .then(data => {
       previewContext = data.context;
+      previewSourceIsDomain = data.source === 'domain';
       if (data.source === 'domain' && data.default) {
         label.textContent = 'داده پیش‌فرض: ' + data.domain;
+        if (!document.getElementById('preview-domain').value.trim()) {
+          document.getElementById('preview-domain').value = data.domain || '';
+        }
       } else if (data.source === 'domain') {
         label.textContent = 'داده واقعی: ' + data.domain;
       } else if (data.notfound) {
@@ -379,6 +414,61 @@ document.getElementById('load-domain-btn').addEventListener('click', () => {
 });
 document.getElementById('preview-domain').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); loadPreviewData(e.target.value.trim()); }
+});
+
+document.getElementById('test-send-btn').addEventListener('click', () => {
+  const resultEl = document.getElementById('test-send-result');
+  const domain = document.getElementById('preview-domain').value.trim();
+  if (!domain || !previewSourceIsDomain) {
+    resultEl.innerHTML = '<span style="color:#b91c1c">ابتدا یک دامنه واقعی بارگذاری کنید.</span>';
+    return;
+  }
+  const ch = document.getElementById('channel-select').value;
+  const override = document.getElementById('override-recipient').value.trim();
+  const confirmMsg = override
+    ? ('پیام واقعی به «' + override + '» ارسال شود؟')
+    : ('پیام واقعی با متغیرهای دامنه «' + domain + '» به گیرنده همان دامنه ارسال شود؟');
+  if (!confirm(confirmMsg)) return;
+
+  const payload = {
+    channel: ch,
+    domain: domain,
+    template_id: TEMPLATE_ID,
+    override_recipient: override,
+    kavenegar_template: document.getElementById('kn-template').value.trim(),
+    email_subject: document.getElementById('email-subject').value,
+    email_body: document.getElementById('email-body').value,
+  };
+  KN_TOKENS.forEach(tk => {
+    const sel = document.querySelector('.token-map[data-token="' + tk + '"]');
+    if (sel) payload['map_' + tk] = sel.value;
+  });
+
+  const btn = document.getElementById('test-send-btn');
+  btn.disabled = true;
+  btn.textContent = 'در حال ارسال…';
+  resultEl.textContent = '';
+
+  fetch(TEST_SEND_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+    .then(r => r.json().then(data => ({ http: r.status, data })))
+    .then(({ data }) => {
+      if (data.ok) {
+        resultEl.innerHTML = '<span style="color:#15803d">✓ ' + (data.message || 'ارسال شد') + '</span>';
+      } else {
+        resultEl.innerHTML = '<span style="color:#b91c1c">✗ ' + (data.error || 'ناموفق') + '</span>';
+      }
+    })
+    .catch(() => {
+      resultEl.innerHTML = '<span style="color:#b91c1c">✗ خطا در ارتباط با سرور</span>';
+    })
+    .finally(() => {
+      btn.disabled = false;
+      btn.textContent = 'ارسال تستی واقعی';
+    });
 });
 
 onChannelChange();

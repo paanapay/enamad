@@ -62,7 +62,7 @@ from crm_db import (
     iter_message_logs_for_export,
     call_stats,
 )
-from crm_service import run_campaign
+from crm_service import run_campaign, send_to_domain
 from db import mysql_connection
 
 crm_bp = Blueprint("crm", __name__, url_prefix="/crm")
@@ -713,6 +713,100 @@ def preview_context():
 
     context = build_template_context(row)
     return jsonify({"source": "domain", "domain": row.get("domain"), "context": context})
+
+
+@crm_bp.route("/templates/test-send", methods=["POST"])
+@login_required
+def template_test_send():
+    """Send a real SMS/email using the current form values + a selected domain.
+
+    Always bypasses dry-run so the admin can receive the real message on their
+    own phone/email (pick a domain that has that contact, or override recipient).
+    """
+    data = request.get_json(silent=True) or {}
+    channel = (data.get("channel") or "sms").strip()
+    if channel not in ("sms", "email"):
+        return jsonify({"ok": False, "error": "کانال نامعتبر"}), 400
+
+    domain_query = (data.get("domain") or "").strip()
+    if not domain_query:
+        return jsonify({"ok": False, "error": "دامنه را بارگذاری کنید"}), 400
+
+    override = (data.get("override_recipient") or "").strip() or None
+
+    token_mapping = {}
+    for kn_token in KAVENEGAR_TOKENS:
+        var_name = (data.get(f"map_{kn_token}") or "").strip()
+        if var_name:
+            token_mapping[kn_token] = var_name
+
+    template = {
+        "id": int(data["template_id"]) if data.get("template_id") else None,
+        "channel": channel,
+        "kavenegar_template": (data.get("kavenegar_template") or "").strip(),
+        "token_mapping": token_mapping,
+        "email_subject": data.get("email_subject") or "",
+        "email_body": data.get("email_body") or "",
+    }
+
+    if channel == "sms" and not template["kavenegar_template"]:
+        return jsonify({"ok": False, "error": "نام الگوی کاوه‌نگار را وارد کنید"}), 400
+    if channel == "email" and not (template["email_subject"] or template["email_body"]):
+        return jsonify({"ok": False, "error": "موضوع یا متن ایمیل خالی است"}), 400
+
+    with mysql_connection(_config().mysql) as conn:
+        row = None
+        if domain_query.isdigit():
+            row = q.get_domain_by_id(conn, int(domain_query))
+        if not row:
+            matches = q.search_domains(conn, domain_query, limit=1)
+            row = matches[0] if matches else None
+        if not row:
+            return jsonify({"ok": False, "error": "دامنه یافت نشد"}), 404
+
+        result = send_to_domain(
+            conn,
+            domain_row=row,
+            template=template,
+            channel=channel,
+            mobile_only=not bool(override),
+            force_send=True,
+            override_recipient=override,
+        )
+        conn.commit()
+
+    status = result.get("status")
+    recipient = result.get("recipient") or override or ""
+    if status == "sent":
+        return jsonify(
+            {
+                "ok": True,
+                "status": status,
+                "recipient": recipient,
+                "domain": row.get("domain"),
+                "message": f"ارسال شد به {recipient}",
+            }
+        )
+    if status == "skipped":
+        reasons = {
+            "landline": "شماره این دامنه ثابت است — موبایل ندارد",
+            "no_mobile": "موبایل معتبری برای این دامنه ثبت نشده",
+            "no_email": "ایمیل معتبری برای این دامنه ثبت نشده",
+        }
+        return jsonify(
+            {
+                "ok": False,
+                "status": status,
+                "error": reasons.get(result.get("reason"), "ارسال رد شد"),
+            }
+        ), 400
+    return jsonify(
+        {
+            "ok": False,
+            "status": status,
+            "error": result.get("error") or "ارسال ناموفق",
+        }
+    ), 400
 
 
 @crm_bp.route("/calls")

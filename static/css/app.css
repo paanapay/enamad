@@ -654,6 +654,12 @@ input[type="checkbox"] {
   margin-top: 6px;
 }
 
+.test-send-box {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+
 .preview-source input {
   padding: 8px 10px;
   border-radius: 8px;

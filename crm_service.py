@@ -36,11 +36,13 @@ def send_sms_to_domain(
     mobile_only: bool = True,
     campaign_id: int | None = None,
     automation_rule_id: int | None = None,
+    force_send: bool = False,
+    override_recipient: str | None = None,
 ) -> dict[str, Any]:
     settings = settings or get_all_settings(conn)
     context = build_template_context(domain_row)
     phone_type = context.get("phone_type")
-    mobile = context.get("mobile_phone")
+    mobile = (override_recipient or "").strip() or context.get("mobile_phone")
 
     base_log = {
         "campaign_id": campaign_id,
@@ -49,8 +51,9 @@ def send_sms_to_domain(
         "channel": "sms",
         "template_id": template.get("id"),
     }
+    test_tag = "[ارسال تستی قالب] " if force_send else ""
 
-    if mobile_only and phone_type == "landline":
+    if not override_recipient and mobile_only and phone_type == "landline":
         insert_message_log(
             conn,
             {
@@ -91,7 +94,7 @@ def send_sms_to_domain(
 
     tokens = build_kavenegar_tokens(template, domain_row)
 
-    if is_dry_run(settings):
+    if is_dry_run(settings) and not force_send:
         token_preview = "، ".join(
             f"{k}={v}" for k, v in tokens.items() if v
         )
@@ -130,10 +133,11 @@ def send_sms_to_domain(
                 "recipient_type": "mobile",
                 "status": "sent",
                 "provider_message_id": str(result.get("messageid") or ""),
+                "error_message": test_tag.strip() or None,
                 "sent_at": _now(),
             },
         )
-        return {"status": "sent", "messageid": result.get("messageid")}
+        return {"status": "sent", "messageid": result.get("messageid"), "recipient": mobile}
     except KavenegarError as exc:
         insert_message_log(
             conn,
@@ -142,7 +146,7 @@ def send_sms_to_domain(
                 "recipient": mobile,
                 "recipient_type": "mobile",
                 "status": "failed",
-                "error_message": f"[{exc.status}] {exc.message}",
+                "error_message": f"{test_tag}[{exc.status}] {exc.message}",
             },
         )
         return {"status": "failed", "error": exc.message}
@@ -156,10 +160,16 @@ def send_email_to_domain(
     settings: dict[str, str] | None = None,
     campaign_id: int | None = None,
     automation_rule_id: int | None = None,
+    force_send: bool = False,
+    override_recipient: str | None = None,
 ) -> dict[str, Any]:
     settings = settings or get_all_settings(conn)
     context = build_template_context(domain_row)
-    email = context.get("email_normalized") or normalize_email(domain_row.get("email"))
+    email = (
+        (override_recipient or "").strip()
+        or context.get("email_normalized")
+        or normalize_email(domain_row.get("email"))
+    )
 
     base_log = {
         "campaign_id": campaign_id,
@@ -168,6 +178,7 @@ def send_email_to_domain(
         "channel": "email",
         "template_id": template.get("id"),
     }
+    test_tag = "[ارسال تستی قالب] " if force_send else ""
 
     if not email:
         insert_message_log(
@@ -185,7 +196,7 @@ def send_email_to_domain(
     subject = render_text_template(template.get("email_subject") or "", context)
     body = render_text_template(template.get("email_body") or "", context)
 
-    if is_dry_run(settings):
+    if is_dry_run(settings) and not force_send:
         preview = body.strip().replace("\n", " ")
         if len(preview) > 160:
             preview = preview[:160] + "…"
@@ -213,10 +224,11 @@ def send_email_to_domain(
                 "recipient": email,
                 "recipient_type": "email",
                 "status": "sent",
+                "error_message": test_tag.strip() or None,
                 "sent_at": _now(),
             },
         )
-        return {"status": "sent"}
+        return {"status": "sent", "recipient": email}
     except EmailSendError as exc:
         insert_message_log(
             conn,
@@ -225,7 +237,7 @@ def send_email_to_domain(
                 "recipient": email,
                 "recipient_type": "email",
                 "status": "failed",
-                "error_message": str(exc),
+                "error_message": f"{test_tag}{exc}",
             },
         )
         return {"status": "failed", "error": str(exc)}
@@ -241,6 +253,8 @@ def send_to_domain(
     campaign_id: int | None = None,
     automation_rule_id: int | None = None,
     settings: dict[str, str] | None = None,
+    force_send: bool = False,
+    override_recipient: str | None = None,
 ) -> dict[str, Any]:
     if channel == "sms":
         return send_sms_to_domain(
@@ -251,6 +265,8 @@ def send_to_domain(
             mobile_only=mobile_only,
             campaign_id=campaign_id,
             automation_rule_id=automation_rule_id,
+            force_send=force_send,
+            override_recipient=override_recipient,
         )
     if channel == "email":
         return send_email_to_domain(
@@ -260,6 +276,8 @@ def send_to_domain(
             settings=settings,
             campaign_id=campaign_id,
             automation_rule_id=automation_rule_id,
+            force_send=force_send,
+            override_recipient=override_recipient,
         )
     return {"status": "failed", "error": "کانال نامعتبر"}
 
