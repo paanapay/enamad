@@ -245,6 +245,20 @@ def refresh_domain_trustseal(conn, domain_id: int, client=None) -> tuple[dict, l
         }
         for item in enriched["services"]
     ]
+
+    # After contact details arrive, run pending "new domain" automations
+    # (SMS/email). Skips domains already handled (sent/test/failed).
+    try:
+        from crm_service import process_new_domains
+
+        process_new_domains(conn, [domain_id])
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger("enamad-db").exception(
+            "CRM automation after trustseal failed domain_id=%s", domain_id
+        )
+
     return enriched, services
 
 

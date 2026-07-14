@@ -9,6 +9,7 @@ from contact_utils import build_template_context, normalize_email, render_text_t
 from crm_db import (
     build_kavenegar_tokens,
     get_active_rules_for_trigger,
+    automation_already_handled,
     get_all_settings,
     get_campaign,
     get_domains_by_ids,
@@ -333,7 +334,16 @@ def run_campaign(conn, campaign_id: int) -> dict[str, int]:
 
 
 def process_new_domains(conn, domain_ids: list[int]) -> None:
-    """Run automation rules for newly inserted domains."""
+    """Run automation rules for newly inserted / freshly enriched domains.
+
+    Timing:
+      - Called from save_domains when a brand-new enamad_id+code is stored
+      - Called again from refresh_domain_trustseal after contact details arrive
+
+    Domains without mobile/email are left alone (no log) so a later trustseal
+    refresh can still trigger the rule. Final outcomes (sent/test/failed or
+    non-retryable skip) are not re-sent.
+    """
     if not domain_ids:
         return
 
@@ -345,10 +355,28 @@ def process_new_domains(conn, domain_ids: list[int]) -> None:
     settings = get_all_settings(conn)
 
     for domain_row in domains:
+        context = build_template_context(domain_row)
         for rule in rules:
+            rule_id = int(rule["id"])
+            if automation_already_handled(conn, int(domain_row["id"]), rule_id=rule_id):
+                continue
+
+            channel = rule["channel"]
+            # Wait for contact info — do not write a skip log yet.
+            if channel == "sms" and not context.get("mobile_phone"):
+                # landline-only domains are still attempted below so they get a
+                # permanent skip once phone_type is known.
+                phone_type = context.get("phone_type")
+                if phone_type in ("", "none", "unknown", None) and not domain_row.get("phone"):
+                    continue
+            if channel == "email" and not (
+                context.get("email_normalized") or domain_row.get("email")
+            ):
+                continue
+
             template = {
                 "id": rule["template_id"],
-                "channel": rule["channel"],
+                "channel": channel,
                 "kavenegar_template": rule.get("kavenegar_template"),
                 "token_mapping": rule.get("token_mapping"),
                 "email_subject": rule.get("email_subject"),
@@ -359,19 +387,23 @@ def process_new_domains(conn, domain_ids: list[int]) -> None:
                     conn,
                     domain_row=domain_row,
                     template=template,
-                    channel=rule["channel"],
+                    channel=channel,
                     mobile_only=bool(rule.get("mobile_only", 1)),
-                    automation_rule_id=rule["id"],
+                    automation_rule_id=rule_id,
                     settings=settings,
                 )
             except Exception as exc:  # noqa: BLE001
-                log.exception("automation failed domain=%s rule=%s", domain_row.get("id"), rule.get("id"))
+                log.exception(
+                    "automation failed domain=%s rule=%s",
+                    domain_row.get("id"),
+                    rule_id,
+                )
                 insert_message_log(
                     conn,
                     {
-                        "automation_rule_id": rule["id"],
+                        "automation_rule_id": rule_id,
                         "domain_id": domain_row.get("id"),
-                        "channel": rule["channel"],
+                        "channel": channel,
                         "status": "failed",
                         "error_message": str(exc),
                         "template_id": rule["template_id"],

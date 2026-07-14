@@ -1012,6 +1012,38 @@ def get_active_rules_for_trigger(conn, trigger_type: str) -> list[dict]:
     return rows
 
 
+def automation_already_handled(
+    conn, domain_id: int, *, rule_id: int | None = None
+) -> bool:
+    """True if this domain already got a final automation attempt (sent/test/failed
+    or a non-retryable skip such as landline). Missing-contact skips are NOT final
+    so a later trustseal refresh can still trigger the rule.
+    """
+    sql = """
+        SELECT status, error_message
+        FROM message_logs
+        WHERE domain_id = %s AND automation_rule_id IS NOT NULL
+    """
+    params: list[Any] = [domain_id]
+    if rule_id is not None:
+        sql += " AND automation_rule_id = %s"
+        params.append(rule_id)
+    with conn.cursor() as cursor:
+        cursor.execute(sql, params)
+        rows = list(cursor.fetchall())
+    for row in rows:
+        status = row.get("status") or ""
+        if status in ("sent", "test", "failed"):
+            return True
+        if status == "skipped":
+            err = str(row.get("error_message") or "")
+            # Retryable: contact was empty at scrape time; refresh may fill it.
+            if "موبایل معتبر" in err or "ایمیل معتبر" in err:
+                continue
+            return True
+    return False
+
+
 def _sanitize_kavenegar_token(value: str, *, allow_spaces: bool = False) -> str:
     """Kavenegar token/token2/token3 reject spaces, newlines and underscores.
 
