@@ -153,3 +153,38 @@ def read_log_entries(
         "total_raw": len(raw),
         "error": None,
     }
+
+
+def clear_logs(*, filename: str = "", all_files: bool = False) -> tuple[int, list[str]]:
+    """Truncate enamad.log or delete rotated backups. Returns (count, errors)."""
+    if all_files:
+        names = [f["name"] for f in list_log_files()]
+        if "enamad.log" not in names:
+            names.append("enamad.log")
+    else:
+        names = [(filename or "enamad.log").strip()]
+
+    cleared = 0
+    errors: list[str] = []
+    root = os.path.abspath(LOG_DIR)
+
+    for name in names:
+        if not name.startswith("enamad.log") or ".." in name or "/" in name or "\\" in name:
+            errors.append(name)
+            continue
+        path = os.path.abspath(os.path.join(LOG_DIR, name))
+        if not path.startswith(root + os.sep):
+            errors.append(name)
+            continue
+        try:
+            os.makedirs(LOG_DIR, exist_ok=True)
+            if name == "enamad.log":
+                with open(path, "w", encoding="utf-8"):
+                    pass
+            elif os.path.isfile(path):
+                os.remove(path)
+            cleared += 1
+        except OSError as exc:
+            errors.append(f"{name}: {exc}")
+
+    return cleared, errors

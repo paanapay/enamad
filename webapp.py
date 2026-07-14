@@ -24,7 +24,7 @@ from crm_db import ROLE_SUPER, authenticate_admin, ensure_crm_tables, CALL_OUTCO
 from jalali_utils import format_jdate, format_jdatetime, is_jalali_date
 from crm_panel import crm_bp
 from db import ensure_domain_detail_columns, ensure_domain_indexes, load_config, mysql_connection
-from log_viewer import LEVELS, list_log_files, read_log_entries
+from log_viewer import LEVELS, clear_logs, list_log_files, read_log_entries
 from logging_setup import LOG_DIR, setup_logging
 
 setup_logging()
@@ -452,6 +452,28 @@ def system_logs():
         lines=lines,
         line_options=(200, 500, 1000, 2000),
     )
+
+
+@app.route("/system/logs/clear", methods=["POST"])
+@login_required
+@super_admin_required
+def system_logs_clear():
+    scope = (request.form.get("scope") or "current").strip()
+    filename = (request.form.get("file") or "enamad.log").strip()
+    all_files = scope == "all"
+
+    cleared, errors = clear_logs(filename=filename, all_files=all_files)
+    if errors:
+        flash(f"برخی فایل‌ها پاک نشدند: {', '.join(errors)}", "error")
+    elif cleared:
+        if all_files:
+            flash(f"{cleared} فایل لاگ خالی شد.", "ok")
+        else:
+            flash(f"فایل «{filename}» خالی شد.", "ok")
+    else:
+        flash("فایلی برای پاک کردن یافت نشد.", "error")
+
+    return redirect(url_for("system_logs", file="enamad.log"))
 
 
 def _clean_domain(domain: str) -> str:

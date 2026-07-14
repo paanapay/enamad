@@ -959,8 +959,20 @@ input[type="checkbox"] {
   text-decoration: underline;
 }
 
-.btn-link.danger:hover {
+.btn.ghost.danger {
   color: #b91c1c;
+  border-color: rgba(220, 38, 38, 0.35);
+}
+
+.btn.ghost.danger:hover {
+  background: rgba(220, 38, 38, 0.08);
+  border-color: #dc2626;
+  color: #991b1b;
+}
+
+.log-clear-form {
+  display: inline;
+  margin: 0;
 }
 
 .muted {

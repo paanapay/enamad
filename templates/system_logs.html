@@ -36,6 +36,19 @@
   {% if level or query or filename != 'enamad.log' or lines != 500 %}
   <a class="btn ghost" href="{{ url_for('system_logs') }}">حذف فیلتر</a>
   {% endif %}
+  <form method="post" action="{{ url_for('system_logs_clear') }}" class="log-clear-form"
+        onsubmit="return confirm('محتوای فایل «{{ filename }}» خالی شود؟');">
+    <input type="hidden" name="file" value="{{ filename }}">
+    <input type="hidden" name="scope" value="current">
+    <button class="btn ghost danger" type="submit">خالی کردن این فایل</button>
+  </form>
+  {% if log_files|length > 1 %}
+  <form method="post" action="{{ url_for('system_logs_clear') }}" class="log-clear-form"
+        onsubmit="return confirm('همه فایل‌های لاگ (شامل نسخه‌های پشتیبان) خالی شوند؟');">
+    <input type="hidden" name="scope" value="all">
+    <button class="btn ghost danger" type="submit">خالی کردن همه</button>
+  </form>
+  {% endif %}
 </form>
 
 <div class="panel log-panel">
