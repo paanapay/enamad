@@ -6,10 +6,12 @@
     <div style="font-size:44px;margin-bottom:6px">🛡️</div>
     <h1 style="justify-content:center">پنل مدیریت اعتماد</h1>
     <p class="muted" style="margin-top:-8px">نام کاربری و رمز عبور را وارد کنید</p>
-    <form method="post" style="margin-top:18px">
+    <form method="post" style="margin-top:18px" autocomplete="on">
       <input type="text" name="username" placeholder="نام کاربری" autofocus
+             autocomplete="username"
              style="width:100%;text-align:center;margin-bottom:12px">
       <input type="password" name="password" placeholder="رمز عبور"
+             autocomplete="current-password"
              style="width:100%;text-align:center;margin-bottom:12px">
       <button class="btn" style="width:100%" type="submit">ورود</button>
     </form>

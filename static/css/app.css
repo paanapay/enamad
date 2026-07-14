@@ -458,6 +458,89 @@ input:focus {
   border-color: #fcd34d;
 }
 
+/* Visible on/off switch for dry-run (native checkbox alone was easy to miss). */
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  cursor: pointer;
+  font-weight: 700;
+  user-select: none;
+}
+
+.toggle input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
+}
+
+.toggle-track {
+  position: relative;
+  flex: 0 0 auto;
+  width: 48px;
+  height: 28px;
+  border-radius: 999px;
+  background: #cbd5e1;
+  border: 1px solid #94a3b8;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.toggle-knob {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.25);
+  transition: transform 0.15s ease;
+}
+
+.toggle input:checked + .toggle-track {
+  background: #f59e0b;
+  border-color: #d97706;
+}
+
+.toggle input:checked + .toggle-track .toggle-knob {
+  transform: translateX(-20px);
+}
+
+.toggle input:focus-visible + .toggle-track {
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.35);
+}
+
+.toggle-text {
+  font-size: 15px;
+}
+
+/* Keep plain checkboxes (TLS etc.) visibly sized. */
+input[type="checkbox"] {
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  max-width: 18px !important;
+  margin: 0 6px 0 0;
+  accent-color: var(--accent2);
+  cursor: pointer;
+  flex: none !important;
+  vertical-align: middle;
+}
+
+.toggle input[type="checkbox"] {
+  /* override the size rules above for the visually-hidden switch input */
+  width: 1px !important;
+  height: 1px !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  margin: 0;
+}
+
 .kv {
   display: grid;
   grid-template-columns: 150px 1fr;
