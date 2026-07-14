@@ -36,6 +36,9 @@
   {% if level or query or filename != 'enamad.log' or lines != 500 %}
   <a class="btn ghost" href="{{ url_for('system_logs') }}">حذف فیلتر</a>
   {% endif %}
+</form>
+
+<div class="searchbar log-actions">
   <form method="post" action="{{ url_for('system_logs_clear') }}" class="log-clear-form"
         onsubmit="return confirm('محتوای فایل «{{ filename }}» خالی شود؟');">
     <input type="hidden" name="file" value="{{ filename }}">
@@ -49,7 +52,7 @@
     <button class="btn ghost danger" type="submit">خالی کردن همه</button>
   </form>
   {% endif %}
-</form>
+</div>
 
 <div class="panel log-panel">
   {% if entries %}

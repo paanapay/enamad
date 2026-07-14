@@ -179,10 +179,17 @@ def clear_logs(*, filename: str = "", all_files: bool = False) -> tuple[int, lis
         try:
             os.makedirs(LOG_DIR, exist_ok=True)
             if name == "enamad.log":
-                with open(path, "w", encoding="utf-8"):
-                    pass
+                if os.path.isfile(path):
+                    # truncate works even while gunicorn keeps the file open
+                    with open(path, "r+", encoding="utf-8") as fh:
+                        fh.seek(0)
+                        fh.truncate(0)
+                else:
+                    open(path, "w", encoding="utf-8").close()
             elif os.path.isfile(path):
                 os.remove(path)
+            else:
+                continue
             cleared += 1
         except OSError as exc:
             errors.append(f"{name}: {exc}")

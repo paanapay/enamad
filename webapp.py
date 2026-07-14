@@ -473,7 +473,7 @@ def system_logs_clear():
     else:
         flash("فایلی برای پاک کردن یافت نشد.", "error")
 
-    return redirect(url_for("system_logs", file="enamad.log"))
+    return redirect(url_for("system_logs", file=filename if not all_files else "enamad.log"))
 
 
 def _clean_domain(domain: str) -> str:

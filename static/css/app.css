@@ -975,6 +975,11 @@ input[type="checkbox"] {
   margin: 0;
 }
 
+.log-actions {
+  margin-top: -8px;
+  margin-bottom: 16px;
+}
+
 .muted {
   color: var(--muted);
 }
