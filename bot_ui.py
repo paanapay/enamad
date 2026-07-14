@@ -346,8 +346,6 @@ def domain_card(row: dict, *, compact: bool = False) -> str:
         lines.append(f"📅 صدور: {esc(row['approve_date'])}")
     if row.get("expire_date"):
         lines.append(f"⏳ انقضا: {esc(row['expire_date'])}")
-    if row.get("trustseal_url"):
-        lines.append(f"🔗 {f.link('نماد اعتماد', row['trustseal_url'])}")
     if row.get("updated_at"):
         lines.append(f"🕐 به‌روز: {fmt_date(row.get('updated_at'))}")
     return "\n".join(lines)
