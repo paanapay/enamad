@@ -334,15 +334,14 @@ def run_campaign(conn, campaign_id: int) -> dict[str, int]:
 
 
 def process_new_domains(conn, domain_ids: list[int]) -> None:
-    """Run automation rules for newly inserted / freshly enriched domains.
+    """Run automation rules only for domains created *after* each rule existed.
 
     Timing:
       - Called from save_domains when a brand-new enamad_id+code is stored
-      - Called again from refresh_domain_trustseal after contact details arrive
+      - Called from refresh_domain_trustseal after contact details arrive
 
-    Domains without mobile/email are left alone (no log) so a later trustseal
-    refresh can still trigger the rule. Final outcomes (sent/test/failed or
-    non-retryable skip) are not re-sent.
+    Old catalogue domains (created before the rule) are never messaged, even
+    when a later trustseal refresh fills their phone/email.
     """
     if not domain_ids:
         return
@@ -355,17 +354,21 @@ def process_new_domains(conn, domain_ids: list[int]) -> None:
     settings = get_all_settings(conn)
 
     for domain_row in domains:
+        domain_created = domain_row.get("created_at")
         context = build_template_context(domain_row)
         for rule in rules:
             rule_id = int(rule["id"])
+            rule_created = rule.get("created_at")
+            # Only domains that appeared after this rule was created.
+            if domain_created and rule_created and domain_created < rule_created:
+                continue
+
             if automation_already_handled(conn, int(domain_row["id"]), rule_id=rule_id):
                 continue
 
             channel = rule["channel"]
             # Wait for contact info — do not write a skip log yet.
             if channel == "sms" and not context.get("mobile_phone"):
-                # landline-only domains are still attempted below so they get a
-                # permanent skip once phone_type is known.
                 phone_type = context.get("phone_type")
                 if phone_type in ("", "none", "unknown", None) and not domain_row.get("phone"):
                     continue

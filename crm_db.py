@@ -985,7 +985,7 @@ def get_domains_by_ids(conn, domain_ids: list[int]) -> list[dict]:
             f"""
             SELECT id, domain, business_name, owner_name, phone, email,
                    phone_type, mobile_phone, email_normalized,
-                   province, city, approve_date, expire_date
+                   province, city, approve_date, expire_date, created_at
             FROM enamad_domains
             WHERE id IN ({placeholders})
             """,
