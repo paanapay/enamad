@@ -20,6 +20,7 @@
         {% if current_admin.is_super %}
         <a href="{{ url_for('users') }}" class="{{ 'active' if active=='users' }}">کاربران ربات</a>
         <a href="{{ url_for('crm.admins_list') }}" class="{{ 'active' if active=='admins' }}">مدیران</a>
+        <a href="{{ url_for('system_logs') }}" class="{{ 'active' if active=='system_logs' }}">لاگ سیستم</a>
         {% endif %}
       </nav>
       <span class="spacer"></span>

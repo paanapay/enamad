@@ -37,6 +37,7 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-changeme}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-enamad}
       TZ: ${TZ:-Asia/Tehran}
+      LOG_DIR: /app/logs
       BOT_TOKEN: ${BOT_TOKEN:-}
       TELEGRAM_ALLOWED_USERS: ${TELEGRAM_ALLOWED_USERS:-}
       TELEGRAM_ADMIN_USERS: ${TELEGRAM_ADMIN_USERS:-}
@@ -61,6 +62,8 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
+    volumes:
+      - logs_data:/app/logs
 
   bale-bot:
     build: .
@@ -79,6 +82,8 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
+    volumes:
+      - logs_data:/app/logs
 
   web:
     build: .
@@ -98,6 +103,8 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
+    volumes:
+      - logs_data:/app/logs
 
   scheduler:
     build: .
@@ -119,6 +126,9 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
+    volumes:
+      - logs_data:/app/logs
 
 volumes:
   mysql_data:
+  logs_data:

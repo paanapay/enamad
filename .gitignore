@@ -15,6 +15,7 @@ venv/
 # Runtime / scraped artifacts
 enamad_cookies.txt
 cookies.txt
+logs/
 *.csv
 *.json
 captcha_tmp/

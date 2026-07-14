@@ -24,6 +24,10 @@ from crm_db import ROLE_SUPER, authenticate_admin, ensure_crm_tables, CALL_OUTCO
 from jalali_utils import format_jdate, format_jdatetime, is_jalali_date
 from crm_panel import crm_bp
 from db import ensure_domain_detail_columns, ensure_domain_indexes, load_config, mysql_connection
+from log_viewer import LEVELS, list_log_files, read_log_entries
+from logging_setup import LOG_DIR, setup_logging
+
+setup_logging()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("WEB_SECRET_KEY") or secrets.token_hex(32)
@@ -411,6 +415,42 @@ def users():
     pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
     return render_template(
         "users.html", rows=rows, total=total, page=page, pages=pages
+    )
+
+
+@app.route("/system/logs")
+@login_required
+@super_admin_required
+def system_logs():
+    filename = (request.args.get("file") or "enamad.log").strip()
+    level = (request.args.get("level") or "").strip().upper()
+    query = (request.args.get("q") or "").strip()
+    try:
+        lines = int(request.args.get("lines", 500))
+    except ValueError:
+        lines = 500
+    if lines not in (200, 500, 1000, 2000):
+        lines = 500
+
+    data = read_log_entries(
+        filename=filename,
+        max_lines=lines,
+        level=level,
+        search=query,
+    )
+    return render_template(
+        "system_logs.html",
+        entries=data["entries"],
+        filename=data["filename"],
+        total_raw=data["total_raw"],
+        error=data["error"],
+        log_files=list_log_files(),
+        log_dir=LOG_DIR,
+        levels=LEVELS,
+        level=level,
+        query=query,
+        lines=lines,
+        line_options=(200, 500, 1000, 2000),
     )
 
 

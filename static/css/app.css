@@ -1048,6 +1048,82 @@ jdp-container .jdp-btn-close {
   border-radius: 8px;
 }
 
-jdp-container .jdp-day.selected {
-  background: var(--accent2) !important;
+/* ===== System log viewer ===== */
+.log-panel {
+  padding: 0;
+  overflow: auto;
+  max-height: 72vh;
+}
+
+.log-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.log-entry {
+  border-bottom: 1px solid var(--line);
+  padding: 12px 16px;
+}
+
+.log-entry:last-child {
+  border-bottom: none;
+}
+
+.log-entry.log-error,
+.log-entry.log-critical {
+  background: rgba(220, 38, 38, 0.04);
+}
+
+.log-entry.log-warning {
+  background: rgba(217, 119, 6, 0.06);
+}
+
+.log-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.log-logger {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.log-body {
+  margin: 0;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  direction: ltr;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.badge.log-badge.error,
+.badge.log-badge.critical {
+  background: rgba(220, 38, 38, 0.14);
+  color: #b91c1c;
+}
+
+.badge.log-badge.warning {
+  background: rgba(217, 119, 6, 0.14);
+  color: #b45309;
+}
+
+.badge.log-badge.info {
+  background: rgba(14, 165, 233, 0.12);
+  color: #0369a1;
+}
+
+.badge.log-badge.debug {
+  background: var(--panel2);
+  color: var(--muted);
 }

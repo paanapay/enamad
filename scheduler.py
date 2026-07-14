@@ -32,10 +32,9 @@ from apscheduler.triggers.cron import CronTrigger
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = SCRIPT_DIR / "config.ini"
 
-logging.basicConfig(
-    format="%(asctime)s [%(levelname)s] scheduler: %(message)s",
-    level=logging.INFO,
-)
+from logging_setup import setup_logging
+
+setup_logging()
 log = logging.getLogger("enamad-scheduler")
 
 

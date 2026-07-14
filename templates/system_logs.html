@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% set active = 'system_logs' %}
+{% block title %}لاگ سیستم{% endblock %}
+{% block body %}
+<h1>لاگ سیستم</h1>
+<p class="muted">
+  خطاها و رویدادهای سرویس‌ها (وب، ربات، زمان‌بند، CRM) در فایل
+  <span class="mono">{{ log_dir }}</span> ذخیره می‌شوند.
+  معادل سادهٔ <strong>Laravel Log Viewer</strong> — بدون پکیج خارجی.
+</p>
+
+{% if error %}
+<div class="flash error">{{ error }}</div>
+{% endif %}
+
+<form class="searchbar" method="get" action="{{ url_for('system_logs') }}">
+  <select name="file">
+    {% for f in log_files %}
+    <option value="{{ f.name }}" {{ 'selected' if f.name == filename }}>{{ f.name }} ({{ (f.size / 1024)|round(1) }} KB)</option>
+    {% else %}
+    <option value="enamad.log">enamad.log</option>
+    {% endfor %}
+  </select>
+  <select name="level">
+    <option value="">همه سطوح</option>
+    {% for lv in levels %}
+    <option value="{{ lv }}" {{ 'selected' if level==lv }}>{{ lv }}</option>
+    {% endfor %}
+  </select>
+  <select name="lines">
+    {% for n in line_options %}
+    <option value="{{ n }}" {{ 'selected' if lines==n }}>{{ n }} خط آخر</option>
+    {% endfor %}
+  </select>
+  <input type="search" name="q" value="{{ query }}" placeholder="جستجو در متن لاگ…" autocomplete="off">
+  <button class="btn" type="submit">اعمال</button>
+  {% if level or query or filename != 'enamad.log' or lines != 500 %}
+  <a class="btn ghost" href="{{ url_for('system_logs') }}">حذف فیلتر</a>
+  {% endif %}
+</form>
+
+<div class="panel log-panel">
+  {% if entries %}
+  <div class="log-list">
+    {% for e in entries %}
+    <article class="log-entry log-{{ (e.level or 'raw')|lower }}">
+      <header class="log-head">
+        {% if e.ts %}<time class="mono">{{ e.ts }}</time>{% endif %}
+        {% if e.level %}<span class="badge log-badge {{ e.level|lower }}">{{ e.level }}</span>{% endif %}
+        {% if e.logger %}<span class="log-logger mono">{{ e.logger }}</span>{% endif %}
+      </header>
+      <pre class="log-body">{{ e.message }}</pre>
+    </article>
+    {% endfor %}
+  </div>
+  <p class="hint muted">نمایش {{ entries|length }} رکورد از {{ total_raw }} خط خوانده‌شده (جدیدترین بالا).</p>
+  {% else %}
+  <div class="empty">
+    {% if log_files %}
+    لاگی با این فیلترها یافت نشد.
+    {% else %}
+    هنوز فایل لاگی ساخته نشده. بعد از اولین فعالیت سرویس‌ها (ربات، زمان‌بند، CRM) اینجا پر می‌شود.
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
