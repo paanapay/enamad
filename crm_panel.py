@@ -162,6 +162,9 @@ def settings():
     if request.method == "POST":
         data = {key: request.form.get(key, "") for key in CRM_SETTINGS_KEYS}
         data["smtp_tls"] = "yes" if request.form.get("smtp_tls") == "on" else "no"
+        data["smtp_ssl_verify"] = (
+            "yes" if request.form.get("smtp_ssl_verify") == "on" else "no"
+        )
         data["dry_run"] = "yes" if request.form.get("dry_run") == "on" else "no"
         with mysql_connection(_config().mysql) as conn:
             save_settings(conn, data)

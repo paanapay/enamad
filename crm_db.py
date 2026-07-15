@@ -29,6 +29,8 @@ CRM_SETTINGS_KEYS = (
     "smtp_password",
     "smtp_from",
     "smtp_tls",
+    # "no" = accept self-signed certificates (skip TLS verification).
+    "smtp_ssl_verify",
     # "yes" = test/dry-run mode: nothing is really sent; messages are only logged.
     "dry_run",
 )

@@ -18,6 +18,7 @@ class EmailConfig:
         password: str = "",
         from_addr: str = "",
         use_tls: bool = True,
+        verify_ssl: bool = True,
     ):
         self.host = (host or "").strip()
         self.port = int(port or 587)
@@ -25,6 +26,7 @@ class EmailConfig:
         self.password = password or ""
         self.from_addr = (from_addr or self.username or "").strip()
         self.use_tls = use_tls
+        self.verify_ssl = verify_ssl
 
     @classmethod
     def from_settings(cls, settings: dict[str, str]) -> "EmailConfig":
@@ -35,6 +37,10 @@ class EmailConfig:
             password=settings.get("smtp_password", ""),
             from_addr=settings.get("smtp_from", ""),
             use_tls=(settings.get("smtp_tls", "yes").lower() in ("1", "true", "yes", "on")),
+            verify_ssl=(
+                settings.get("smtp_ssl_verify", "yes").lower()
+                in ("1", "true", "yes", "on")
+            ),
         )
 
     def is_configured(self) -> bool:
@@ -64,6 +70,10 @@ def send_email(
     try:
         if config.use_tls:
             context = ssl.create_default_context()
+            if not config.verify_ssl:
+                # Self-signed certificate on the mail server.
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
             with smtplib.SMTP(config.host, config.port, timeout=30) as server:
                 server.ehlo()
                 server.starttls(context=context)

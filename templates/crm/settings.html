@@ -51,6 +51,13 @@
   <div class="form-row">
     <label><input type="checkbox" name="smtp_tls" value="on" {{ 'checked' if settings.smtp_tls != 'no' }}> استفاده از TLS</label>
   </div>
+  <div class="form-row">
+    <label><input type="checkbox" name="smtp_ssl_verify" value="on" {{ 'checked' if settings.smtp_ssl_verify != 'no' }}> بررسی گواهی SSL سرور</label>
+    <div class="hint muted">
+      اگر خطای «certificate verify failed / self-signed certificate» می‌گیرید،
+      یعنی میل‌سرور گواهی معتبر ندارد؛ این تیک را بردارید تا گواهی self-signed پذیرفته شود.
+    </div>
+  </div>
 
   <button class="btn" type="submit" style="margin-top:16px">ذخیره تنظیمات</button>
 </form>
