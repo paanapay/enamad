@@ -8,9 +8,10 @@
 
 <div class="panel" style="padding:0;overflow:auto;margin-top:16px">
   <table>
-    <thead><tr><th>نام</th><th>کانال</th><th>قالب</th><th>تعداد</th><th>موفق</th><th>ناموفق</th><th>رد شده</th><th>وضعیت</th><th></th></tr></thead>
+    <thead><tr><th>نام</th><th>کانال</th><th>قالب</th><th>تعداد</th><th>ارسال شده</th><th>ناموفق</th><th>رد شده</th><th>در انتظار</th><th>وضعیت</th><th></th></tr></thead>
     <tbody>
       {% for c in rows %}
+      {% set processed = (c.sent_count or 0) + (c.failed_count or 0) + (c.skipped_count or 0) %}
       <tr>
         <td>{{ c.name }}</td>
         <td>{{ 'پیامک' if c.channel=='sms' else 'ایمیل' }}</td>
@@ -19,11 +20,18 @@
         <td>{{ c.sent_count|group }}</td>
         <td>{{ c.failed_count|group }}</td>
         <td>{{ c.skipped_count|group }}</td>
-        <td><span class="badge {{ 'ok' if c.status=='completed' else 'no' }}">{{ c.status }}</span></td>
+        <td>{{ ([c.total_count - processed, 0]|max)|group }}</td>
+        <td>
+          {% if c.status == 'completed' %}<span class="badge ok">تکمیل شد</span>
+          {% elif c.status == 'running' %}<span class="badge">در حال ارسال</span>
+          {% elif c.status == 'queued' %}<span class="badge">در صف</span>
+          {% elif c.status == 'failed' %}<span class="badge no">خطا</span>
+          {% else %}<span class="badge muted">پیش‌نویس</span>{% endif %}
+        </td>
         <td><a href="{{ url_for('crm.campaign_detail', campaign_id=c.id) }}">جزئیات ›</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="9" class="empty">کمپینی ثبت نشده.</td></tr>
+      <tr><td colspan="10" class="empty">کمپینی ثبت نشده.</td></tr>
       {% endfor %}
     </tbody>
   </table>

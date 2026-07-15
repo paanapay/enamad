@@ -56,13 +56,18 @@ from crm_db import (
     save_settings,
     save_template,
     update_admin,
+    update_campaign_counts,
     verify_admin_password,
     count_message_logs,
     message_log_stats,
     iter_message_logs_for_export,
     call_stats,
 )
-from crm_service import run_campaign, send_to_domain
+from crm_service import (
+    is_campaign_running,
+    send_to_domain,
+    start_campaign_async,
+)
 from db import mysql_connection
 from email_presets import list_email_presets
 
@@ -392,18 +397,18 @@ def campaign_new():
         else:
             with mysql_connection(_config().mysql) as conn:
                 campaign_id = create_campaign(conn, data)
+                # Mark as queued before the worker picks it up so the detail
+                # page shows a meaningful status immediately.
+                if request.form.get("send_now") == "on":
+                    update_campaign_counts(conn, campaign_id, status="queued")
                 conn.commit()
             if request.form.get("send_now") == "on":
-                try:
-                    with mysql_connection(_config().mysql) as conn:
-                        counts = run_campaign(conn, campaign_id)
-                    flash(
-                        f"کمپین ارسال شد: {counts['sent']} موفق، "
-                        f"{counts['failed']} ناموفق، {counts['skipped']} رد شده.",
-                        "ok",
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    flash(f"خطا در ارسال: {exc}", "error")
+                start_campaign_async(_config().mysql, campaign_id)
+                flash(
+                    f"کمپین در صف ارسال قرار گرفت ({len(domain_ids)} دامنه). "
+                    "پیشرفت ارسال در همین صفحه به‌روز می‌شود.",
+                    "ok",
+                )
                 return redirect(url_for("crm.campaign_detail", campaign_id=campaign_id))
             flash("کمپین ذخیره شد.", "ok")
             return redirect(url_for("crm.campaign_detail", campaign_id=campaign_id))
@@ -623,17 +628,46 @@ def message_logs_export():
 @crm_bp.route("/campaigns/<int:campaign_id>/send", methods=["POST"])
 @login_required
 def campaign_send(campaign_id: int):
-    try:
-        with mysql_connection(_config().mysql) as conn:
-            counts = run_campaign(conn, campaign_id)
-        flash(
-            f"ارسال انجام شد: {counts['sent']} موفق، "
-            f"{counts['failed']} ناموفق، {counts['skipped']} رد شده.",
-            "ok",
-        )
-    except Exception as exc:  # noqa: BLE001
-        flash(f"خطا: {exc}", "error")
+    with mysql_connection(_config().mysql) as conn:
+        campaign = get_campaign(conn, campaign_id)
+        if not campaign:
+            abort(404)
+        if campaign["status"] in ("queued", "running") or is_campaign_running(campaign_id):
+            flash("این کمپین هم‌اکنون در حال ارسال است.", "error")
+            return redirect(url_for("crm.campaign_detail", campaign_id=campaign_id))
+        update_campaign_counts(conn, campaign_id, status="queued")
+        conn.commit()
+    if start_campaign_async(_config().mysql, campaign_id):
+        flash("ارسال در صف قرار گرفت؛ پیشرفت در همین صفحه به‌روز می‌شود.", "ok")
+    else:
+        flash("این کمپین هم‌اکنون در حال ارسال است.", "error")
     return redirect(url_for("crm.campaign_detail", campaign_id=campaign_id))
+
+
+@crm_bp.route("/campaigns/<int:campaign_id>/status")
+@login_required
+def campaign_status(campaign_id: int):
+    with mysql_connection(_config().mysql) as conn:
+        campaign = get_campaign(conn, campaign_id)
+    if not campaign:
+        abort(404)
+    total = int(campaign.get("total_count") or 0)
+    processed = (
+        int(campaign.get("sent_count") or 0)
+        + int(campaign.get("failed_count") or 0)
+        + int(campaign.get("skipped_count") or 0)
+    )
+    return jsonify(
+        {
+            "status": campaign["status"],
+            "total": total,
+            "sent": int(campaign.get("sent_count") or 0),
+            "failed": int(campaign.get("failed_count") or 0),
+            "skipped": int(campaign.get("skipped_count") or 0),
+            "pending": max(0, total - processed),
+            "running": campaign["status"] in ("queued", "running"),
+        }
+    )
 
 
 @crm_bp.route("/admins")

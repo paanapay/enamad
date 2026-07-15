@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime
 from typing import Any
 
@@ -284,6 +285,9 @@ def send_to_domain(
 
 
 def run_campaign(conn, campaign_id: int) -> dict[str, int]:
+    """Send a campaign sequentially (queue-style), committing progress after
+    every message so the detail page can show live sent/failed/pending counts.
+    """
     campaign = get_campaign(conn, campaign_id)
     if not campaign:
         raise ValueError("کمپین یافت نشد")
@@ -298,6 +302,7 @@ def run_campaign(conn, campaign_id: int) -> dict[str, int]:
     mobile_only = bool(campaign.get("mobile_only", 1))
 
     update_campaign_counts(conn, campaign_id, status="running", started=True)
+    conn.commit()
     counts = {"sent": 0, "failed": 0, "skipped": 0}
 
     for domain_row in domains:
@@ -315,22 +320,69 @@ def run_campaign(conn, campaign_id: int) -> dict[str, int]:
         # (sent bucket) so the campaign completes normally.
         if status in ("sent", "test"):
             counts["sent"] += 1
+            update_campaign_counts(conn, campaign_id, sent=1)
         elif status == "skipped":
             counts["skipped"] += 1
+            update_campaign_counts(conn, campaign_id, skipped=1)
         else:
             counts["failed"] += 1
+            update_campaign_counts(conn, campaign_id, failed=1)
+        # Commit per message: sending is network-bound anyway, and this makes
+        # the log + counters visible to the detail page while running.
+        conn.commit()
 
-    update_campaign_counts(
-        conn,
-        campaign_id,
-        status="completed",
-        sent=counts["sent"],
-        failed=counts["failed"],
-        skipped=counts["skipped"],
-        finished=True,
-    )
+    update_campaign_counts(conn, campaign_id, status="completed", finished=True)
     conn.commit()
     return counts
+
+
+# --- Background campaign queue -------------------------------------------
+# One worker thread per campaign; a module-level registry prevents the same
+# campaign from being queued twice (e.g. double-click on "start").
+_running_campaigns: set[int] = set()
+_running_lock = threading.Lock()
+
+
+def is_campaign_running(campaign_id: int) -> bool:
+    with _running_lock:
+        return campaign_id in _running_campaigns
+
+
+def start_campaign_async(mysql_config, campaign_id: int) -> bool:
+    """Queue a campaign to send in a background thread.
+
+    Returns False if this campaign is already being processed.
+    """
+    from db import mysql_connection
+
+    with _running_lock:
+        if campaign_id in _running_campaigns:
+            return False
+        _running_campaigns.add(campaign_id)
+
+    def worker():
+        try:
+            with mysql_connection(mysql_config) as conn:
+                run_campaign(conn, campaign_id)
+        except Exception:
+            log.exception("campaign %s failed in background worker", campaign_id)
+            try:
+                with mysql_connection(mysql_config) as conn:
+                    update_campaign_counts(
+                        conn, campaign_id, status="failed", finished=True
+                    )
+                    conn.commit()
+            except Exception:
+                log.exception("could not mark campaign %s as failed", campaign_id)
+        finally:
+            with _running_lock:
+                _running_campaigns.discard(campaign_id)
+
+    thread = threading.Thread(
+        target=worker, name=f"campaign-{campaign_id}", daemon=True
+    )
+    thread.start()
+    return True
 
 
 def process_new_domains(conn, domain_ids: list[int]) -> None:

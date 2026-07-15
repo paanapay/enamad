@@ -5,24 +5,51 @@
 <p><a href="{{ url_for('crm.campaigns_list') }}">‹ بازگشت به کمپین‌ها</a></p>
 <h1>{{ campaign.name }}</h1>
 
+{% set processed = (campaign.sent_count or 0) + (campaign.failed_count or 0) + (campaign.skipped_count or 0) %}
+{% set pending = [campaign.total_count - processed, 0]|max %}
+{% set is_running = campaign.status in ('queued', 'running') %}
+
 <div class="grid" style="margin-bottom:18px">
   <div class="card stat"><div class="num">{{ campaign.total_count|group }}</div><div class="lbl">کل</div></div>
-  <div class="card stat"><div class="num">{{ campaign.sent_count|group }}</div><div class="lbl">موفق</div></div>
-  <div class="card stat"><div class="num">{{ campaign.failed_count|group }}</div><div class="lbl">ناموفق</div></div>
-  <div class="card stat"><div class="num">{{ campaign.skipped_count|group }}</div><div class="lbl">رد شده</div></div>
+  <div class="card stat"><div class="num" id="stat-sent">{{ campaign.sent_count|group }}</div><div class="lbl">ارسال شده</div></div>
+  <div class="card stat"><div class="num" id="stat-failed">{{ campaign.failed_count|group }}</div><div class="lbl">ناموفق</div></div>
+  <div class="card stat"><div class="num" id="stat-skipped">{{ campaign.skipped_count|group }}</div><div class="lbl">رد شده</div></div>
+  <div class="card stat"><div class="num" id="stat-pending">{{ pending|group }}</div><div class="lbl">در انتظار ارسال</div></div>
 </div>
+
+{% if campaign.total_count %}
+<div class="panel" id="progress-panel" style="{{ '' if is_running or pending else 'display:none' }}">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+    <strong id="progress-label">
+      {% if is_running %}در حال ارسال از صف…{% else %}پیشرفت ارسال{% endif %}
+    </strong>
+    <span class="muted" id="progress-text">{{ processed|group }} از {{ campaign.total_count|group }}</span>
+  </div>
+  <div style="background:#e2e8f0;border-radius:999px;height:12px;overflow:hidden">
+    <div id="progress-bar"
+         style="height:100%;border-radius:999px;background:linear-gradient(90deg,#0ea5e9,#2563eb);transition:width .6s;width:{{ (processed * 100 // campaign.total_count) if campaign.total_count else 0 }}%"></div>
+  </div>
+</div>
+{% endif %}
 
 <div class="panel">
   <div class="kv">
     <div class="k">کانال</div><div>{{ 'پیامک' if campaign.channel=='sms' else 'ایمیل' }}</div>
     <div class="k">قالب</div><div>{{ campaign.template_name }}</div>
-    <div class="k">وضعیت</div><div>{{ campaign.status }}</div>
+    <div class="k">وضعیت</div>
+    <div id="campaign-status">
+      {% if campaign.status == 'completed' %}<span class="badge ok">تکمیل شد</span>
+      {% elif campaign.status == 'running' %}<span class="badge">در حال ارسال</span>
+      {% elif campaign.status == 'queued' %}<span class="badge">در صف ارسال</span>
+      {% elif campaign.status == 'failed' %}<span class="badge no">خطا در ارسال</span>
+      {% else %}<span class="badge muted">پیش‌نویس</span>{% endif %}
+    </div>
     <div class="k">فقط موبایل</div><div>{{ 'بله' if campaign.mobile_only else 'خیر' }}</div>
     <div class="k">تاریخ</div><div class="mono">{{ campaign.created_at|jdatetime }}</div>
   </div>
-  {% if campaign.status != 'completed' and campaign.status != 'running' %}
+  {% if not is_running and campaign.status != 'completed' %}
   <form method="post" action="{{ url_for('crm.campaign_send', campaign_id=campaign.id) }}" style="margin-top:14px">
-    <button class="btn" type="submit" onclick="return confirm('ارسال شروع شود؟')">شروع ارسال</button>
+    <button class="btn" type="submit" onclick="return confirm('ارسال شروع شود؟')">شروع ارسال (صف)</button>
   </form>
   {% endif %}
 </div>
@@ -46,5 +73,49 @@
       {% endfor %}
     </tbody>
   </table>
+  {% if pages > 1 %}
+  <div class="pager">
+    {% if page > 0 %}
+      <a href="{{ url_for('crm.campaign_detail', campaign_id=campaign.id, page=page-1) }}">‹ قبلی</a>
+    {% else %}<span class="disabled">‹ قبلی</span>{% endif %}
+    <span>صفحه {{ (page+1)|group }} از {{ pages|group }}</span>
+    {% if page + 1 < pages %}
+      <a href="{{ url_for('crm.campaign_detail', campaign_id=campaign.id, page=page+1) }}">بعدی ›</a>
+    {% else %}<span class="disabled">بعدی ›</span>{% endif %}
+  </div>
+  {% endif %}
 </div>
+{% endblock %}
+{% block scripts %}
+{% if is_running %}
+<script>
+// Poll campaign progress while queued/running; reload once finished so the
+// final log table and status badge are shown.
+const statusUrl = '{{ url_for("crm.campaign_status", campaign_id=campaign.id) }}';
+const fa = n => Number(n).toLocaleString('fa-IR');
+
+async function pollStatus() {
+  try {
+    const res = await fetch(statusUrl, {headers: {'Accept': 'application/json'}});
+    if (!res.ok) return;
+    const s = await res.json();
+    document.getElementById('stat-sent').textContent = fa(s.sent);
+    document.getElementById('stat-failed').textContent = fa(s.failed);
+    document.getElementById('stat-skipped').textContent = fa(s.skipped);
+    document.getElementById('stat-pending').textContent = fa(s.pending);
+    const processed = s.sent + s.failed + s.skipped;
+    const bar = document.getElementById('progress-bar');
+    const text = document.getElementById('progress-text');
+    if (bar && s.total) bar.style.width = Math.round(processed * 100 / s.total) + '%';
+    if (text) text.textContent = fa(processed) + ' از ' + fa(s.total);
+    if (!s.running) {
+      window.location.reload();
+      return;
+    }
+  } catch (e) { /* transient network error — keep polling */ }
+  setTimeout(pollStatus, 3000);
+}
+setTimeout(pollStatus, 3000);
+</script>
+{% endif %}
 {% endblock %}

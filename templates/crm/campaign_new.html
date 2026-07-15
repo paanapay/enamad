@@ -38,8 +38,9 @@
     <div style="padding:18px 20px 0">
       <h2 style="margin:0 0 6px">انتخاب دامنه‌ها *</h2>
       <p class="muted" style="margin:0 0 14px;font-size:13px">
-        پیش‌فرض: ترتیب سایت اینماد.
+        پیش‌فرض: ترتیب سایت اینماد. انتخاب‌ها هنگام جابجایی بین صفحات حفظ می‌شوند.
         <span id="selected-count">{{ selected_ids|length|group }}</span> دامنه انتخاب شده.
+        <a href="#" id="clear-selection" style="margin-inline-start:8px">پاک کردن انتخاب‌ها</a>
       </p>
     </div>
 
@@ -53,7 +54,7 @@
       </select>
       <button class="btn ghost" type="button" onclick="applyDomainFilters()">اعمال فیلتر</button>
       {% if query or phone_filter %}
-      <a class="btn ghost" href="{{ url_for('crm.campaign_new', selected=selected_ids|join(',')) }}">حذف فیلتر</a>
+      <a class="btn ghost" href="{{ url_for('crm.campaign_new') }}">حذف فیلتر</a>
       {% endif %}
     </div>
 
@@ -108,7 +109,25 @@
 {% endblock %}
 {% block scripts %}
 <script>
-const selected = new Set({{ selected_ids|tojson }});
+// Selection survives pagination via sessionStorage (URLs break with large
+// id lists). Everything is kept as strings — checkbox values are strings,
+// so mixing in numbers from the server would silently drop matches.
+const STORAGE_KEY = 'campaign-new-selection';
+const serverSelected = ({{ selected_ids|tojson }}).map(String);
+
+function loadStored() {
+  try {
+    return JSON.parse(sessionStorage.getItem(STORAGE_KEY) || '[]').map(String);
+  } catch (e) { return []; }
+}
+
+const selected = new Set([...loadStored(), ...serverSelected]);
+
+function persist() {
+  try {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify([...selected]));
+  } catch (e) { /* storage full/unavailable — hidden field still has the ids */ }
+}
 
 function syncHiddenField() {
   document.getElementById('domain-ids-field').value = [...selected].join(',');
@@ -135,12 +154,12 @@ function campaignListUrl(page) {
   if (q) params.set('q', q);
   if (phone) params.set('phone_type', phone);
   if (page) params.set('page', String(page));
-  if (selected.size) params.set('selected', [...selected].join(','));
   const qs = params.toString();
   return '{{ url_for("crm.campaign_new") }}' + (qs ? '?' + qs : '');
 }
 
 function applyDomainFilters() {
+  persist();
   window.location.href = campaignListUrl(0);
 }
 
@@ -148,6 +167,7 @@ document.querySelectorAll('.domain-pick').forEach(cb => {
   cb.addEventListener('change', () => {
     if (cb.checked) selected.add(cb.value);
     else selected.delete(cb.value);
+    persist();
     syncHiddenField();
     syncCheckboxes();
   });
@@ -161,6 +181,7 @@ if (pickPage) {
       else selected.delete(cb.value);
       cb.checked = pickPage.checked;
     });
+    persist();
     syncHiddenField();
     syncCheckboxes();
   });
@@ -169,8 +190,18 @@ if (pickPage) {
 document.querySelectorAll('#domain-pager a[data-page]').forEach(link => {
   link.addEventListener('click', e => {
     e.preventDefault();
+    persist();
     window.location.href = campaignListUrl(link.dataset.page);
   });
+});
+
+document.getElementById('clear-selection').addEventListener('click', e => {
+  e.preventDefault();
+  if (selected.size && !confirm('همه انتخاب‌ها پاک شود؟')) return;
+  selected.clear();
+  persist();
+  syncHiddenField();
+  syncCheckboxes();
 });
 
 document.getElementById('domain-search').addEventListener('keydown', e => {
@@ -182,6 +213,9 @@ document.getElementById('domain-search').addEventListener('keydown', e => {
 
 document.getElementById('campaign-form').addEventListener('submit', () => {
   syncHiddenField();
+  // Selection is now in the POST body; if validation fails the server sends
+  // the ids back and they are re-merged into storage on the next load.
+  try { sessionStorage.removeItem(STORAGE_KEY); } catch (e) {}
 });
 
 function filterTemplates() {
