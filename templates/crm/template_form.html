@@ -78,7 +78,7 @@
       <h2>تنظیمات ایمیل</h2>
 
       <div class="form-row email-preset-box">
-        <label>قالب آماده (تم آبی)</label>
+        <label>قالب آماده</label>
         <div class="source-row" style="align-items:flex-start">
           <select id="email-preset-select" style="flex:1;min-width:0">
             <option value="">— انتخاب قالب آماده —</option>
@@ -88,7 +88,10 @@
           </select>
           <button type="button" class="btn" id="apply-email-preset">اعمال قالب</button>
         </div>
-        <p class="hint muted" id="email-preset-desc">یکی از قالب‌های ازپیش‌ساخته را انتخاب کنید؛ موضوع و متن ایمیل پر می‌شود و بعداً قابل ویرایش است.</p>
+        <p class="hint muted" id="email-preset-desc">
+          قالب‌های ازپیش‌ساخته با چیدمان راست‌چین و رنگ‌بندی آبی — فقط ساختار و نمونه متن هستند؛
+          بعد از اعمال، نام مجموعه، لینک، تلفن و متن را با نیاز خودتان عوض کنید.
+        </p>
       </div>
 
       <div class="form-row">
@@ -358,7 +361,7 @@ if (emailPresetSelect) {
   emailPresetSelect.addEventListener('change', () => {
     const opt = emailPresetSelect.selectedOptions[0];
     const desc = opt && opt.dataset.desc;
-    emailPresetDesc.textContent = desc || 'یکی از قالب‌های ازپیش‌ساخته را انتخاب کنید؛ موضوع و متن ایمیل پر می‌شود و بعداً قابل ویرایش است.';
+    emailPresetDesc.textContent = desc || 'قالب‌های ازپیش‌ساخته با چیدمان راست‌چین و رنگ‌بندی آبی — بعد از اعمال متن و اطلاعات تماس را ویرایش کنید.';
   });
 }
 
