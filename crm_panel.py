@@ -729,6 +729,16 @@ def preview():
     return preview_template(template, domain)
 
 
+@crm_bp.route("/preview-email-html", methods=["POST"])
+@login_required
+def preview_email_html():
+    from email_layout import prepare_email_html
+
+    data = request.get_json(silent=True) or {}
+    body = data.get("body", "")
+    return jsonify({"html": prepare_email_html(body)})
+
+
 @crm_bp.route("/preview-context")
 @login_required
 def preview_context():

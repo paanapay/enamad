@@ -158,7 +158,7 @@
             <span>از: <span id="email-from">سامانه اعتماد</span></span>
             <span id="email-to">به: {{ '{{email}}' }}</span>
           </div>
-          <div class="email-body" id="email-body-preview"></div>
+          <div class="email-body email-body-preview-host" id="email-body-preview"></div>
         </div>
       </div>
     </div>
@@ -176,6 +176,8 @@ let previewSourceIsDomain = false;
 const KN_TOKENS = {{ kavenegar_tokens|tojson }};
 const TEMPLATE_ID = {{ row.id if row else 'null' }};
 const TEST_SEND_URL = {{ url_for('crm.template_test_send')|tojson }};
+const PREVIEW_EMAIL_URL = {{ url_for('crm.preview_email_html')|tojson }};
+let emailPreviewTimer = null;
 
 function esc(s) {
   return String(s == null ? '' : s)
@@ -239,14 +241,35 @@ function renderEmailPreview() {
 
   const raw = document.getElementById('email-body').value;
   const filled = fillVars(raw);
-  const bodyEl = document.getElementById('email-body-preview');
+  const host = document.getElementById('email-body-preview');
   if (!filled.trim()) {
-    bodyEl.innerHTML = '<span style="opacity:.5">متن ایمیل را وارد کنید…</span>';
-  } else if (looksLikeHtml(filled)) {
-    bodyEl.innerHTML = filled;            // HTML content as-is
-  } else {
-    bodyEl.textContent = filled;          // plain text; CSS keeps line breaks
+    host.innerHTML = '<span style="opacity:.5">متن ایمیل را وارد کنید…</span>';
+    return;
   }
+  clearTimeout(emailPreviewTimer);
+  emailPreviewTimer = setTimeout(() => {
+    fetch(PREVIEW_EMAIL_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: filled }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        let iframe = host.querySelector('iframe');
+        if (!iframe) {
+          host.innerHTML = '';
+          iframe = document.createElement('iframe');
+          iframe.title = 'پیش‌نمایش ایمیل';
+          iframe.style.cssText = 'width:100%;min-height:360px;border:0;border-radius:8px;background:#f4f4f5';
+          host.appendChild(iframe);
+        }
+        iframe.srcdoc = data.html || '';
+      })
+      .catch(() => {
+        host.innerHTML = '<span style="color:#b91c1c">خطا در پیش‌نمایش</span>';
+      });
+  }, 250);
+
   document.getElementById('email-to').textContent =
     'به: ' + (previewContext.email_normalized || previewContext.email || '—');
 }
@@ -326,6 +349,9 @@ ClassicEditor.create(emailTextarea, {
   ],
 }).then(editor => {
   ckEditor = editor;
+  editor.editing.view.change(writer => {
+    writer.setAttribute('dir', 'rtl', editor.editing.view.document.getRoot());
+  });
   const sync = () => {
     emailTextarea.value = editor.getData();
     renderPreview();

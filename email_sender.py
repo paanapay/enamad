@@ -7,6 +7,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any
 
+from email_layout import prepare_email_html
 
 class EmailConfig:
     def __init__(
@@ -61,12 +62,12 @@ def send_email(
     if not config.is_configured():
         raise EmailSendError("تنظیمات SMTP کامل نیست")
 
+    html_body = prepare_email_html(body)
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = config.from_addr
     msg["To"] = to_addr
-    msg.attach(MIMEText(body, "html" if "<" in body and ">" in body else "plain", "utf-8"))
-
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
     try:
         if config.use_tls:
             context = ssl.create_default_context()
