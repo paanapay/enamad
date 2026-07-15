@@ -220,13 +220,29 @@ def login():
 @app.route("/logout")
 def logout():
     session.clear()
-    return redirect(url_for("login"))
+    return redirect(url_for("index"))
 
 
 STATS_CACHE_TTL = int(os.environ.get("WEB_STATS_CACHE_TTL", "60"))
 
 
 @app.route("/")
+def index():
+    if session.get("admin_id"):
+        return redirect(url_for("dashboard"))
+    stats = None
+    try:
+        def produce():
+            with mysql_connection(app_config().mysql) as conn:
+                return q.get_stats(conn)
+
+        stats = cached("landing_stats", STATS_CACHE_TTL, produce)
+    except Exception:
+        pass
+    return render_template("landing.html", stats=stats)
+
+
+@app.route("/dashboard")
 @login_required
 def dashboard():
     def produce():

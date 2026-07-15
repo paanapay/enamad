@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="سرویس دسترسی به دیتابیس زنده اینماد — پنل وب، وب‌سرویس API و CRM بازاریابی. بدون نصب و نگهداری.">
+  <title>سرویس داده اینماد — پنل + API + CRM</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/vazir.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/landing.css') }}">
+</head>
+<body class="landing">
+<div class="landing-wrap">
+
+  <header class="landing-header">
+    <div class="inner">
+      <a href="{{ url_for('index') }}" class="landing-brand">
+        <span>🛡️</span>
+        <span>سرویس داده اینماد</span>
+      </a>
+      <nav class="landing-nav">
+        <a href="#services">خدمات</a>
+        <a href="#features">ویژگی‌ها</a>
+        <a href="#audience">مخاطبان</a>
+        <a href="#pricing">بسته‌ها</a>
+        <a href="#contact">تماس</a>
+      </nav>
+      <div class="landing-actions">
+        <a href="{{ url_for('login') }}" class="btn-landing btn-login">ورود مشترکین</a>
+      </div>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="inner">
+      <div>
+        <span class="hero-badge">سرویس ابری — بدون نصب و نگهداری</span>
+        <h1>دسترسی به دیتابیس زنده اینماد، آماده فروش و بازاریابی</h1>
+        <p class="hero-lead">
+          ما داده‌های رسمی اینماد را جمع‌آوری و به‌روز نگه می‌داریم؛
+          شما از طریق <strong>پنل وب</strong>، <strong>وب‌سرویس</strong> یا <strong>CRM</strong>
+          به همان داده دسترسی دارید — بدون اسکرپر، بدون سرور، بدون دردسر فنی.
+        </p>
+        <div class="hero-cta">
+          <a href="#contact" class="btn-landing btn-primary">درخواست دمو رایگان</a>
+          <a href="#pricing" class="btn-landing btn-secondary">مشاهده بسته‌ها</a>
+        </div>
+        <div class="hero-points">
+          <span>داده همیشه به‌روز</span>
+          <span>پنل فارسی</span>
+          <span>وب‌سرویس API</span>
+          <span>CRM پیامک و ایمیل</span>
+        </div>
+      </div>
+
+      <div class="hero-card">
+        <h3>{% if stats %}آمار زنده دیتابیس{% else %}آنچه دریافت می‌کنید{% endif %}</h3>
+        <div class="stats-grid">
+          {% if stats %}
+          <div class="stat-box">
+            <div class="num">{{ stats.total|group }}</div>
+            <div class="lbl">دامنه ثبت‌شده</div>
+          </div>
+          <div class="stat-box">
+            <div class="num">{{ stats.rated|group }}</div>
+            <div class="lbl">دارای امتیاز</div>
+          </div>
+          <div class="stat-box">
+            <div class="num">{{ stats.scrape.distinct_pages_in_db|group }}</div>
+            <div class="lbl">صفحه پوشش‌داده‌شده</div>
+          </div>
+          <div class="stat-box">
+            <div class="num">{% if stats.last_update %}{{ stats.last_update|jdatetime }}{% else %}—{% endif %}</div>
+            <div class="lbl">آخرین به‌روزرسانی</div>
+          </div>
+          {% else %}
+          <div class="stat-box">
+            <div class="num">دامنه</div>
+            <div class="lbl">نام، مالک، استان، امتیاز</div>
+          </div>
+          <div class="stat-box">
+            <div class="num">تماس</div>
+            <div class="lbl">تلفن، موبایل، ایمیل</div>
+          </div>
+          <div class="stat-box">
+            <div class="num">مجوز</div>
+            <div class="lbl">خدمات و پروانه‌ها</div>
+          </div>
+          <div class="stat-box">
+            <div class="num">CRM</div>
+            <div class="lbl">پیامک، ایمیل، تماس</div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="problem">
+    <div class="section-title">
+      <h2>مشکل را می‌شناسید؟</h2>
+      <p>جمع‌آوری دستی اطلاعات اینماد زمان‌بر، پرهزینه و غیرقابل اتکاست.</p>
+    </div>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">🔒</div>
+        <h3>کپچا در هر صفحه</h3>
+        <p>لیست رسمی enamad.ir برای هر صفحه کپچا می‌خواهد و استخراج دستی یا اکسل عملاً ممکن نیست.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📂</div>
+        <h3>داده پراکنده</h3>
+        <p>آدرس، تلفن، ایمیل و مجوزها در صفحات جداگانه قرار دارند و به‌روز نمی‌مانند.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📣</div>
+        <h3>بازاریابی بدون ابزار</h3>
+        <p>ارسال پیام شخصی‌سازی‌شده به هزاران کسب‌وکار بدون CRM، پرخطا و زمان‌بر است.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="services" style="padding-top:0">
+    <div class="section-title">
+      <h2>چه خدماتی ارائه می‌دهیم؟</h2>
+      <p>شما به داده و ابزار دسترسی دارید — نه کد منبع، نه سرور، نه نگهداری.</p>
+    </div>
+    <div class="services-grid">
+      <div class="service-card featured">
+        <span class="service-tag">پرطرفدار</span>
+        <div class="feature-icon">🖥️</div>
+        <h3>پنل وب</h3>
+        <p>جستجو، فیلتر پیشرفته، جزئیات دامنه و مجوزها، استعلام زنده و خروجی — همه در یک پنل فارسی.</p>
+        <ul class="service-list">
+          <li>دسترسی ماهانه با اکانت اختصاصی</li>
+          <li>فیلتر استان، امتیاز، تاریخ انقضا</li>
+          <li>بدون نیاز به نصب نرم‌افزار</li>
+        </ul>
+      </div>
+      <div class="service-card">
+        <div class="feature-icon">🔌</div>
+        <h3>وب‌سرویس API</h3>
+        <p>داده اینماد را مستقیم در نرم‌افزار، سایت یا CRM خودتان مصرف کنید.</p>
+        <ul class="service-list">
+          <li>REST API با کلید دسترسی</li>
+          <li>جستجو، فیلتر و جزئیات دامنه</li>
+          <li>محدودیت درخواست بر اساس بسته</li>
+        </ul>
+      </div>
+      <div class="service-card">
+        <div class="feature-icon">📨</div>
+        <h3>CRM بازاریابی</h3>
+        <p>کمپین پیامکی و ایمیلی شخصی‌سازی‌شده روی لیست هدف اینماد — با گزارش کامل.</p>
+        <ul class="service-list">
+          <li>قالب پیامک (کاوه‌نگار) و ایمیل</li>
+          <li>انتخاب مخاطب از فیلتر پنل</li>
+          <li>ثبت تماس و پیگیری فروش</li>
+        </ul>
+      </div>
+      <div class="service-card">
+        <div class="feature-icon">🤖</div>
+        <h3>ربات تلگرام / بله</h3>
+        <p>دسترسی سریع به داده از داخل پیام‌رسان — مناسب تیم‌های میدانی و فروش.</p>
+        <ul class="service-list">
+          <li>جستجوی دامنه و کسب‌وکار</li>
+          <li>مرور جدیدترین‌ها و برترین‌ها</li>
+          <li>افزودنی بسته حرفه‌ای</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="section compare-band">
+    <div class="section-title">
+      <h2>چرا سرویس، نه خرید نرم‌افزار؟</h2>
+    </div>
+    <div class="compare-grid">
+      <div class="compare-card bad">
+        <h3>❌ خرید / نصب نرم‌افزار</h3>
+        <ul>
+          <li>نیاز به سرور و نگهداری فنی</li>
+          <li>به‌روزرسانی و کپچا دست خودتان</li>
+          <li>هزینه اولیه بالا و ریسک از کار افتادن</li>
+          <li>تیم فنی برای راه‌اندازی لازم است</li>
+        </ul>
+      </div>
+      <div class="compare-card good">
+        <h3>✅ اشتراک سرویس ما</h3>
+        <ul>
+          <li>فقط لاگین کنید و استفاده کنید</li>
+          <li>داده هر روز خودکار به‌روز می‌شود</li>
+          <li>پرداخت ماهانه — بدون هزینه زیرساخت</li>
+          <li>پشتیبانی و بهبود مداوم سرویس</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="features" style="padding-top:0">
+    <div class="section-title">
+      <h2>در هر بسته چه می‌گیرید؟</h2>
+      <p>داده ساخت‌یافته و ابزارهای آماده — نه پروژه خام.</p>
+    </div>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">📊</div>
+        <h3>دیتابیس زنده</h3>
+        <p>دامنه، مالک، تماس، امتیاز، مجوزها — همه فیلدها ساخت‌یافته و قابل جستجو.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔍</div>
+        <h3>جستجو و فیلتر</h3>
+        <p>استان، شهر، امتیاز، تاریخ تأیید/انقضا، نوع تلفن — لیست هدف دقیق بسازید.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔄</div>
+        <h3>به‌روزرسانی خودکار</h3>
+        <p>نیازی به نگرانی از قدیمی شدن داده نیست — تیم ما زیرساخت را نگه می‌دارد.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📱</div>
+        <h3>اطلاعات تماس</h3>
+        <p>تلفن، موبایل تفکیک‌شده، ایمیل و آدرس — آماده تماس و کمپین.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📋</div>
+        <h3>مجوزها و خدمات</h3>
+        <p>لیست مجوزهای هر فروشگاه با مرجع صدور و تاریخ اعتبار.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🛡️</div>
+        <h3>داده معتبر</h3>
+        <p>منبع رسمی enamad.ir — کسب‌وکارهای دارای نماد اعتماد الکترونیکی.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="audience">
+    <div class="section-title">
+      <h2>برای چه کسانی؟</h2>
+    </div>
+    <div class="audience-grid">
+      <div class="audience-card">
+        <strong>آژانس‌های دیجیتال مارکتینگ</strong>
+        <span>لیست هدف + کمپین پیامک و ایمیل شخصی‌سازی‌شده</span>
+      </div>
+      <div class="audience-card">
+        <strong>تیم‌های فروش B2B</strong>
+        <span>جستجوی سریع، فیلتر استان و امتیاز، ثبت تماس</span>
+      </div>
+      <div class="audience-card">
+        <strong>شرکت‌های SaaS و پرداخت</strong>
+        <span>لید جنریشن از کسب‌وکارهای آنلاین تأییدشده</span>
+      </div>
+      <div class="audience-card">
+        <strong>تحلیل‌گران بازار</strong>
+        <span>دیتابیس ساخت‌یافته از اکوسیستم تجارت الکترونیک</span>
+      </div>
+      <div class="audience-card">
+        <strong>استارتاپ‌ها</strong>
+        <span>داده و API آماده — تمرکز روی محصول خودتان</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="pricing">
+    <div class="section-title">
+      <h2>بسته‌های اشتراک</h2>
+      <p>بر اساس نیازتان یک بسته انتخاب کنید — ارتقا در هر زمان ممکن است.</p>
+    </div>
+    <div class="pricing-grid">
+      <div class="pricing-card">
+        <h3>پایه</h3>
+        <p class="pricing-desc">دسترسی به داده</p>
+        <ul>
+          <li>پنل وب — جستجو و فیلتر</li>
+          <li>جزئیات دامنه و مجوزها</li>
+          <li>استعلام زنده</li>
+          <li>۱ کاربر</li>
+        </ul>
+        <a href="#contact" class="btn-landing btn-outline pricing-btn">استعلام قیمت</a>
+      </div>
+      <div class="pricing-card highlight">
+        <span class="service-tag">پیشنهادی</span>
+        <h3>حرفه‌ای</h3>
+        <p class="pricing-desc">فروش و بازاریابی</p>
+        <ul>
+          <li>همه امکانات پایه</li>
+          <li>CRM — کمپین پیامک و ایمیل</li>
+          <li>ربات تلگرام / بله</li>
+          <li>تا ۵ کاربر</li>
+        </ul>
+        <a href="#contact" class="btn-landing btn-primary pricing-btn">درخواست دمو</a>
+      </div>
+      <div class="pricing-card">
+        <h3>سازمانی</h3>
+        <p class="pricing-desc">یکپارچه‌سازی و API</p>
+        <ul>
+          <li>همه امکانات حرفه‌ای</li>
+          <li>وب‌سرویس API اختصاصی</li>
+          <li>محدودیت درخواست بالا</li>
+          <li>پشتیبانی اختصاصی + SLA</li>
+        </ul>
+        <a href="#contact" class="btn-landing btn-sales pricing-btn">تماس با فروش</a>
+      </div>
+    </div>
+    <p class="pricing-note">قیمت‌ها بر اساس تعداد کاربر، حجم API و نیاز CRM تعیین می‌شود. دمو ۷ روزه رایگان.</p>
+  </section>
+
+  <section class="section" id="how">
+    <div class="section-title">
+      <h2>چطور شروع می‌کنید؟</h2>
+    </div>
+    <div class="steps">
+      <div class="step-card">
+        <h3>درخواست دمو</h3>
+        <p>فرم تماس یا پیام — نیازتان را بگویید (پنل، API یا CRM).</p>
+      </div>
+      <div class="step-card">
+        <h3>دسترسی آزمایشی</h3>
+        <p>۷ روز رایگان پنل را امتحان کنید — بدون تعهد.</p>
+      </div>
+      <div class="step-card">
+        <h3>انتخاب بسته</h3>
+        <p>بسته مناسب را انتخاب و اشتراک ماهانه فعال کنید.</p>
+      </div>
+      <div class="step-card">
+        <h3>شروع کار</h3>
+        <p>جستجو، فیلتر، کمپین — از همان روز اول.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="cta-band" id="contact">
+    <h2>همین الان دمو رایگان بگیرید</h2>
+    <p>۷ روز دسترسی به پنل — بدون نصب، بدون کد، بدون سرور. فقط لاگین و شروع.</p>
+    <a href="mailto:info@example.com" class="btn-landing btn-light">درخواست دمو</a>
+    <a href="{{ url_for('login') }}" class="btn-landing btn-ghost-on-dark">ورود مشترکین</a>
+  </section>
+
+  <footer class="landing-footer">
+    <p>سرویس داده اینماد — دسترسی به پنل، API و CRM</p>
+    <p>
+      <a href="{{ url_for('login') }}">ورود مشترکین</a>
+      <a href="#pricing">بسته‌ها</a>
+      <a href="mailto:info@example.com">تماس با ما</a>
+    </p>
+  </footer>
+
+</div>
+</body>
+</html>
