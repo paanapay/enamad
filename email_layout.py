@@ -35,7 +35,7 @@ def _public_font_url() -> str:
 
 
 def _head_styles() -> str:
-    """@font-face (non-Gmail clients) + mobile spacing (Gmail keeps @media)."""
+    """@font-face for clients that support it (not Gmail)."""
     sources: list[str] = []
     url = _public_font_url()
     if url:
@@ -65,22 +65,6 @@ def _head_styles() -> str:
 
     return f"""<style type="text/css">
 {font_face}
-@media only screen and (max-width: 620px) {{
-  .email-content-cell {{
-    padding: 20px 16px !important;
-    font-size: 16px !important;
-    line-height: 2 !important;
-  }}
-  .email-header-cell {{
-    padding: 20px 16px !important;
-    font-size: 17px !important;
-  }}
-  .benefits-box td {{
-    padding: 28px 20px !important;
-    line-height: 2.4 !important;
-    font-size: 16px !important;
-  }}
-}}
 </style>"""
 
 
@@ -154,9 +138,10 @@ def plain_text_to_html(text: str) -> str:
 
 
 def wrap_email_html(content: str) -> str:
+    """Minimal RTL shell: no card, no coloured background — just font + alignment."""
     cell_style = (
-        f"padding:28px 32px;direction:rtl;text-align:right;"
-        f"font-family:{_FONT_STACK};font-size:16px;line-height:1.95;color:#1f2937;"
+        f"direction:rtl;text-align:right;font-family:{_FONT_STACK};"
+        "font-size:16px;line-height:1.95;color:#1f2937;"
     )
     return f"""<!DOCTYPE html>
 <html dir="rtl" lang="fa" xmlns="http://www.w3.org/1999/xhtml">
@@ -166,17 +151,11 @@ def wrap_email_html(content: str) -> str:
 {LAYOUT_MARKER}
 {_head_styles()}
 </head>
-<body style="margin:0;padding:0;background-color:#f4f4f5;font-family:{_FONT_STACK};">
-<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" dir="rtl" style="background-color:#f4f4f5;">
+<body style="margin:0;padding:0;font-family:{_FONT_STACK};">
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" dir="rtl">
 <tr>
-<td align="center" style="padding:16px 8px;">
-<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="600" dir="rtl" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;">
-<tr>
-<td class="email-content-cell" dir="rtl" align="right" style="{cell_style}">
+<td dir="rtl" align="right" style="{cell_style}">
 {content}
-</td>
-</tr>
-</table>
 </td>
 </tr>
 </table>

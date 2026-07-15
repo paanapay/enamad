@@ -280,7 +280,7 @@ function renderEmailPreview() {
           host.innerHTML = '';
           iframe = document.createElement('iframe');
           iframe.title = 'پیش‌نمایش ایمیل';
-          iframe.style.cssText = 'width:100%;min-height:360px;border:0;border-radius:8px;background:#f4f4f5';
+          iframe.style.cssText = 'width:100%;min-height:360px;border:0;background:transparent';
           host.appendChild(iframe);
         }
         iframe.srcdoc = data.html || '';
