@@ -76,6 +76,21 @@
     <!-- ---------- EMAIL ---------- -->
     <div id="email-fields" style="display:none">
       <h2>تنظیمات ایمیل</h2>
+
+      <div class="form-row email-preset-box">
+        <label>قالب آماده (تم آبی)</label>
+        <div class="source-row" style="align-items:flex-start">
+          <select id="email-preset-select" style="flex:1;min-width:0">
+            <option value="">— انتخاب قالب آماده —</option>
+            {% for p in email_presets %}
+            <option value="{{ p.id }}" data-desc="{{ p.description }}">{{ p.title }}</option>
+            {% endfor %}
+          </select>
+          <button type="button" class="btn" id="apply-email-preset">اعمال قالب</button>
+        </div>
+        <p class="hint muted" id="email-preset-desc">یکی از قالب‌های ازپیش‌ساخته را انتخاب کنید؛ موضوع و متن ایمیل پر می‌شود و بعداً قابل ویرایش است.</p>
+      </div>
+
       <div class="form-row">
         <label>موضوع ایمیل</label>
         <input type="text" name="email_subject" id="email-subject"
@@ -169,9 +184,11 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='vendor/ckeditor/ckeditor.js') }}"></script>
 <script src="{{ url_for('static', filename='vendor/ckeditor/translations/fa.js') }}"></script>
+<script id="email-presets-data" type="application/json">{{ email_presets|tojson }}</script>
 <script id="sample-context" type="application/json">{{ sample_context|tojson }}</script>
 <script>
 let previewContext = JSON.parse(document.getElementById('sample-context').textContent);
+const EMAIL_PRESETS = JSON.parse(document.getElementById('email-presets-data').textContent);
 let previewSourceIsDomain = false;
 const KN_TOKENS = {{ kavenegar_tokens|tojson }};
 const TEMPLATE_ID = {{ row.id if row else 'null' }};
@@ -333,6 +350,47 @@ function onChannelChange() {
   document.getElementById('email-preview').style.display = ch === 'email' ? 'block' : 'none';
   renderPreview();
 }
+
+const emailPresetSelect = document.getElementById('email-preset-select');
+const emailPresetDesc = document.getElementById('email-preset-desc');
+
+if (emailPresetSelect) {
+  emailPresetSelect.addEventListener('change', () => {
+    const opt = emailPresetSelect.selectedOptions[0];
+    const desc = opt && opt.dataset.desc;
+    emailPresetDesc.textContent = desc || 'یکی از قالب‌های ازپیش‌ساخته را انتخاب کنید؛ موضوع و متن ایمیل پر می‌شود و بعداً قابل ویرایش است.';
+  });
+}
+
+function applyEmailPreset() {
+  const id = emailPresetSelect ? emailPresetSelect.value : '';
+  if (!id) {
+    alert('ابتدا یک قالب آماده انتخاب کنید.');
+    return;
+  }
+  const preset = EMAIL_PRESETS.find(p => p.id === id);
+  if (!preset) return;
+
+  const hasContent =
+    document.getElementById('email-subject').value.trim() ||
+    (ckEditor ? ckEditor.getData().trim() : document.getElementById('email-body').value.trim());
+  if (hasContent && !confirm('متن فعلی ایمیل جایگزین شود؟')) return;
+
+  document.getElementById('email-subject').value = preset.subject || '';
+  if (ckEditor) {
+    ckEditor.setData(preset.body || '');
+  } else {
+    document.getElementById('email-body').value = preset.body || '';
+  }
+  document.getElementById('email-body').value = preset.body || '';
+  if (htmlMode && htmlSource) {
+    htmlSource.value = preset.body || '';
+  }
+  renderPreview();
+}
+
+const applyPresetBtn = document.getElementById('apply-email-preset');
+if (applyPresetBtn) applyPresetBtn.addEventListener('click', applyEmailPreset);
 
 /* ============ CKEditor 5 for email ============ */
 const emailTextarea = document.getElementById('email-body');

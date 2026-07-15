@@ -801,6 +801,24 @@ input[type="checkbox"] {
   font-size: 12px;
 }
 
+.email-body-preview-host {
+  padding: 0;
+  min-height: 360px;
+}
+
+.email-preset-box {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 8px;
+}
+
+.email-preset-box label {
+  color: #1e40af;
+  font-weight: 700;
+}
+
 /* ===== Rich text editor (email) ===== */
 .rte {
   border: 1px solid var(--line);

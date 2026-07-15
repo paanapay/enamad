@@ -64,6 +64,7 @@ from crm_db import (
 )
 from crm_service import run_campaign, send_to_domain
 from db import mysql_connection
+from email_presets import list_email_presets
 
 crm_bp = Blueprint("crm", __name__, url_prefix="/crm")
 
@@ -273,6 +274,7 @@ def template_form(template_id: int | None = None):
         variables=TEMPLATE_VARIABLES,
         kavenegar_tokens=KAVENEGAR_TOKENS,
         sample_context=_SAMPLE_CONTEXT,
+        email_presets=list_email_presets(),
     )
 
 
