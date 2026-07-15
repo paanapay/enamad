@@ -7,6 +7,8 @@ from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from contact_utils import normalize_email
+
 PAGE_SIZE = 10
 
 
@@ -115,7 +117,11 @@ def main_menu_keyboard(*, is_admin: bool = False) -> InlineKeyboardMarkup:
             InlineKeyboardButton("🗺 بر اساس استان", callback_data="m:provinces"),
         ],
         [
+            InlineKeyboardButton("📨 ارتباط با پشتیبانی", callback_data="m:support"),
             InlineKeyboardButton("❓ راهنما", callback_data="m:help"),
+        ],
+        [
+            InlineKeyboardButton("ℹ️ معرفی امکانات", callback_data="m:about"),
         ],
     ]
     if is_admin:
@@ -227,6 +233,46 @@ def search_prompt_text() -> str:
     )
 
 
+def support_prompt_text() -> str:
+    f = _fmt
+    return (
+        f"📨 {f.bold('ارتباط با پشتیبانی')}\n\n"
+        "پیام خود را بنویسید و ارسال کنید؛ به دست پشتیبانی می‌رسد و "
+        "پاسخ از همین‌جا برای شما ارسال می‌شود.\n\n"
+        "برای انصراف، /start را بزنید."
+    )
+
+
+def support_sent_text() -> str:
+    f = _fmt
+    return (
+        f"✅ {f.bold('پیام شما ارسال شد.')}\n\n"
+        "به‌محض پاسخ پشتیبانی، جواب در همین گفتگو برای شما ارسال می‌شود."
+    )
+
+
+def support_reply_text(reply: str) -> str:
+    f = _fmt
+    return f"📬 {f.bold('پاسخ پشتیبانی:')}\n\n{f.esc(reply)}"
+
+
+def support_admin_notification(
+    *, first_name: str, last_name: str, username: str, user_id: int, text: str
+) -> str:
+    f = _fmt
+    name = " ".join(part for part in (first_name, last_name) if part) or "بدون نام"
+    lines = [
+        f"📨 {f.bold('پیام جدید پشتیبانی')}",
+        f"👤 {f.esc(name)}" + (f" (@{f.esc(username)})" if username else ""),
+        f"🆔 {f.code(user_id)}",
+        "",
+        f.esc(text),
+        "",
+        f"↩️ {f.italic('برای پاسخ، روی همین پیام Reply بزنید.')}",
+    ]
+    return "\n".join(lines)
+
+
 def help_text() -> str:
     f = _fmt
     return (
@@ -234,8 +280,31 @@ def help_text() -> str:
         f"🔍 {f.bold('جستجو')} — دامنه، نام فارسی یا صاحب امتیاز\n"
         f"🆕 {f.bold('تازه‌ترین‌ها')} — بر اساس ترتیب سایت اینماد\n"
         f"⭐ {f.bold('امتیاز بالا')} — دامنه‌های ۴ و ۵ ستاره\n"
-        f"🗺 {f.bold('استان')} — فیلتر بر اساس استان\n\n"
+        f"🗺 {f.bold('استان')} — فیلتر بر اساس استان\n"
+        f"📨 {f.bold('پشتیبانی')} — ارسال پیام به پشتیبانی و دریافت پاسخ\n\n"
         "💡 اگر دامنه در دیتابیس نبود، جستجوی زنده از enamad.ir هم انجام می‌شود."
+    )
+
+
+def about_text() -> str:
+    f = _fmt
+    return (
+        f"ℹ️ {f.bold('معرفی امکانات')}\n\n"
+        "این ربات بخشی از یک سامانه کامل‌تر است.\n"
+        "استعلام اینماد فقط یکی از امکانات آن است:\n\n"
+        f"🛡 {f.bold('بانک دامنه‌های اینماد')}\n"
+        "جمع‌آوری و به‌روزرسانی خودکار دامنه‌ها همراه مجوزها و اطلاعات تماس\n\n"
+        f"🔍 {f.bold('جستجو و استعلام')}\n"
+        "جستجو در دیتابیس + استعلام زنده از سایت اینماد\n\n"
+        f"📇 {f.bold('CRM کسب‌وکارها')}\n"
+        "ثبت تماس‌ها و پیگیری‌ها در پنل تحت وب\n\n"
+        f"📣 {f.bold('کمپین پیامک و ایمیل')}\n"
+        "ارسال هدفمند بر اساس استان، شهر و دسته‌بندی کسب‌وکار\n\n"
+        f"⚙️ {f.bold('اتوماسیون')}\n"
+        "پیام خودکار به کسب‌وکارهایی که تازه اینماد گرفته‌اند\n\n"
+        f"📊 {f.bold('گزارش و آمار')}\n"
+        "داشبورد مدیریتی با آمار دامنه‌ها، کاربران و ارسال‌ها\n\n"
+        "برای پرسش یا همکاری از «📨 ارتباط با پشتیبانی» استفاده کنید."
     )
 
 
@@ -339,7 +408,9 @@ def domain_card(row: dict, *, compact: bool = False) -> str:
     if row.get("phone"):
         lines.append(f"📞 {f.code(row['phone'])}")
     if row.get("email"):
-        lines.append(f"✉️ {esc(row['email'])}")
+        # Enamad obfuscates emails ("name[at]gmail.com"); show the real address.
+        email = row.get("email_normalized") or normalize_email(row.get("email"))
+        lines.append(f"✉️ {esc(email or row['email'])}")
     if row.get("work_hours"):
         lines.append(f"🕒 {esc(row['work_hours'])}")
     if row.get("approve_date"):

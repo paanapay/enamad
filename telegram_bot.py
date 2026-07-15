@@ -49,6 +49,7 @@ from bot_ui import (
     MD_FMT,
     PAGE_SIZE,
     TextFormat,
+    about_text,
     admin_panel_keyboard,
     admin_panel_text,
     back_home_keyboard,
@@ -70,16 +71,23 @@ from bot_ui import (
     search_other_results_text,
     set_text_format,
     stats_text,
+    support_admin_notification,
+    support_prompt_text,
+    support_reply_text,
+    support_sent_text,
     users_list_keyboard,
     users_list_text,
 )
 from db import (
     commit_connection,
     ensure_bot_users_table,
+    ensure_support_table,
+    find_support_sender,
     load_config,
     mysql_connection,
     normalize_domain,
     record_bot_user,
+    record_support_message,
     refresh_domain_trustseal,
 )
 
@@ -367,6 +375,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await deny_access(update)
         return
     context.user_data.pop("awaiting_search", None)
+    context.user_data.pop("awaiting_support", None)
     if update.message:
         await send_main_menu(
             update.message, is_admin=is_admin(update, get_bot_config(context))
@@ -382,6 +391,20 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     context.user_data["awaiting_search"] = True
     await update.message.reply_text(
         search_prompt_text(),
+        reply_markup=back_home_keyboard(),
+        **send_opts(),
+    )
+
+
+async def cmd_support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not is_allowed(update, get_bot_config(context)):
+        await deny_access(update)
+        return
+    if not update.message:
+        return
+    context.user_data["awaiting_support"] = True
+    await update.message.reply_text(
+        support_prompt_text(),
         reply_markup=back_home_keyboard(),
         **send_opts(),
     )
@@ -492,6 +515,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if data == "m:home":
         context.user_data.pop("awaiting_search", None)
+        context.user_data.pop("awaiting_support", None)
         await send_main_menu(
             query.message, edit=True, is_admin=is_admin(update, get_bot_config(context))
         )
@@ -534,10 +558,29 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
 
+    if data == "m:about":
+        await query.message.edit_text(
+            about_text(),
+            reply_markup=back_home_keyboard(),
+            **send_opts(),
+        )
+        return
+
     if data == "m:search":
         context.user_data["awaiting_search"] = True
+        context.user_data.pop("awaiting_support", None)
         await query.message.edit_text(
             search_prompt_text(),
+            reply_markup=back_home_keyboard(),
+            **send_opts(),
+        )
+        return
+
+    if data == "m:support":
+        context.user_data["awaiting_support"] = True
+        context.user_data.pop("awaiting_search", None)
+        await query.message.edit_text(
+            support_prompt_text(),
             reply_markup=back_home_keyboard(),
             **send_opts(),
         )
@@ -932,6 +975,143 @@ def format_live_result(row: dict) -> str:
     return domain_detail_text(row, services, header=header)
 
 
+async def handle_support_message(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, text: str
+) -> None:
+    """Forward a user's support message to all admins (user id stays hidden
+    from other users; admins see it so they can moderate)."""
+    app_config = get_app_config(context)
+    bot_config = get_bot_config(context)
+    user = update.effective_user
+
+    if not bot_config.admin_user_ids:
+        await update.message.reply_text(
+            "❌ در حال حاضر پشتیبانی در دسترس نیست.",
+            reply_markup=main_menu_keyboard(),
+            **send_opts(),
+        )
+        return
+
+    notification = support_admin_notification(
+        first_name=user.first_name or "",
+        last_name=user.last_name or "",
+        username=user.username or "",
+        user_id=user.id,
+        text=text,
+    )
+
+    delivered: list[tuple[int, int]] = []  # (admin_chat_id, message_id)
+    for admin_id in bot_config.admin_user_ids:
+        if admin_id == user.id:
+            continue
+        try:
+            sent = await context.bot.send_message(
+                chat_id=admin_id, text=notification, **send_opts()
+            )
+            delivered.append((admin_id, sent.message_id))
+        except Exception as exc:
+            log.warning("Support notify admin %s failed: %s", admin_id, exc)
+
+    def _store() -> None:
+        with mysql_connection(app_config.mysql) as conn:
+            if delivered:
+                for admin_chat_id, message_id in delivered:
+                    record_support_message(
+                        conn,
+                        platform=bot_config.platform,
+                        user_id=user.id,
+                        direction="in",
+                        text=text,
+                        admin_chat_id=admin_chat_id,
+                        admin_message_id=message_id,
+                    )
+            else:
+                record_support_message(
+                    conn,
+                    platform=bot_config.platform,
+                    user_id=user.id,
+                    direction="in",
+                    text=text,
+                )
+            commit_connection(conn)
+
+    try:
+        await asyncio.to_thread(_store)
+    except Exception as exc:
+        log.warning("Support message store failed: %s", exc)
+
+    await update.message.reply_text(
+        support_sent_text(),
+        reply_markup=main_menu_keyboard(),
+        **send_opts(),
+    )
+
+
+async def handle_admin_support_reply(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, text: str
+) -> bool:
+    """If an admin replied to a support notification, relay it to the user.
+
+    Returns True when the message was handled as a support reply.
+    """
+    reply_to = update.message.reply_to_message
+    if not reply_to:
+        return False
+
+    app_config = get_app_config(context)
+    bot_config = get_bot_config(context)
+
+    def _lookup() -> int | None:
+        with mysql_connection(app_config.mysql) as conn:
+            return find_support_sender(
+                conn,
+                platform=bot_config.platform,
+                admin_chat_id=update.effective_chat.id,
+                admin_message_id=reply_to.message_id,
+            )
+
+    try:
+        target_user_id = await asyncio.to_thread(_lookup)
+    except Exception as exc:
+        log.warning("Support reply lookup failed: %s", exc)
+        return False
+    if not target_user_id:
+        return False
+
+    try:
+        await context.bot.send_message(
+            chat_id=target_user_id,
+            text=support_reply_text(text),
+            **send_opts(),
+        )
+    except Exception as exc:
+        await update.message.reply_text(
+            f"❌ ارسال پاسخ ناموفق بود: {esc(str(exc))}",
+            **send_opts(),
+        )
+        return True
+
+    def _store() -> None:
+        with mysql_connection(app_config.mysql) as conn:
+            record_support_message(
+                conn,
+                platform=bot_config.platform,
+                user_id=target_user_id,
+                direction="out",
+                text=text,
+                admin_chat_id=update.effective_chat.id,
+            )
+            commit_connection(conn)
+
+    try:
+        await asyncio.to_thread(_store)
+    except Exception as exc:
+        log.warning("Support reply store failed: %s", exc)
+
+    await update.message.reply_text("✅ پاسخ برای کاربر ارسال شد.", **send_opts())
+    return True
+
+
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.message.text:
         return
@@ -945,6 +1125,16 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     app_config = get_app_config(context)
     bot_config = get_bot_config(context)
+
+    # Admin replying (swipe-reply) to a support notification → relay to user.
+    if is_admin(update, bot_config):
+        if await handle_admin_support_reply(update, context, text):
+            return
+
+    # User composing a support message after pressing "ارتباط با پشتیبانی".
+    if context.user_data.pop("awaiting_support", None):
+        await handle_support_message(update, context, text)
+        return
 
     query = normalize_domain(text)
     if len(query) < 2:
@@ -1018,6 +1208,7 @@ BOT_COMMANDS = [
     BotCommand("latest", "تازه‌ترین دامنه‌ها"),
     BotCommand("top", "دامنه‌های امتیاز بالا"),
     BotCommand("provinces", "مرور بر اساس استان"),
+    BotCommand("support", "ارتباط با پشتیبانی"),
     BotCommand("help", "راهنما"),
 ]
 
@@ -1039,6 +1230,7 @@ async def _post_init(application: Application) -> None:
             def _ensure() -> None:
                 with mysql_connection(app_config.mysql) as conn:
                     ensure_bot_users_table(conn)
+                    ensure_support_table(conn)
                     commit_connection(conn)
 
             await asyncio.to_thread(_ensure)
@@ -1111,6 +1303,7 @@ def build_application(config_path: Path, *, platform: str = "telegram") -> Appli
     application.add_handler(CommandHandler("start", cmd_start))
     application.add_handler(CommandHandler("help", cmd_start))
     application.add_handler(CommandHandler("search", cmd_search))
+    application.add_handler(CommandHandler("support", cmd_support))
     application.add_handler(CommandHandler("latest", cmd_latest))
     application.add_handler(CommandHandler("top", cmd_top))
     application.add_handler(CommandHandler("provinces", cmd_provinces))

@@ -175,6 +175,49 @@ def settings():
     return render_template("crm/settings.html", settings=stored)
 
 
+@crm_bp.route("/settings/test-email", methods=["POST"])
+@login_required
+def settings_test_email():
+    """Send a test email with the saved SMTP settings (bypasses dry-run)."""
+    from email_sender import EmailConfig, EmailSendError, send_email
+
+    to_addr = (request.form.get("test_email") or "").strip()
+    if not to_addr or "@" not in to_addr:
+        flash("آدرس ایمیل معتبر وارد کنید.", "error")
+        return redirect(url_for("crm.settings"))
+
+    with mysql_connection(_config().mysql) as conn:
+        stored = get_all_settings(conn)
+
+    config = EmailConfig.from_settings(stored)
+    if not config.is_configured():
+        flash(
+            "تنظیمات SMTP کامل نیست (سرور و آدرس فرستنده لازم است). "
+            "اول تنظیمات را ذخیره کنید.",
+            "error",
+        )
+        return redirect(url_for("crm.settings"))
+
+    try:
+        send_email(
+            config,
+            to_addr=to_addr,
+            subject="ایمیل تستی — تنظیمات SMTP",
+            body=(
+                "این یک ایمیل تستی است.\n\n"
+                "اگر این پیام را دریافت کرده‌اید، تنظیمات SMTP پنل به‌درستی "
+                f"کار می‌کند.\n\nسرور: {config.host}:{config.port}\n"
+                f"فرستنده: {config.from_addr}"
+            ),
+        )
+    except EmailSendError as exc:
+        flash(f"ارسال ایمیل تستی ناموفق بود: {exc}", "error")
+        return redirect(url_for("crm.settings"))
+
+    flash(f"ایمیل تستی با موفقیت به {to_addr} ارسال شد.", "ok")
+    return redirect(url_for("crm.settings"))
+
+
 @crm_bp.route("/templates")
 @login_required
 def templates_list():

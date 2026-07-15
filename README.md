@@ -95,6 +95,34 @@ so no `config.ini` is required. More detail in [DOCS.md](DOCS.md).
 
 ---
 
+## Run on Windows (local development)
+
+Requires **Docker Desktop** and **Python 3.10+**. Ready-made PowerShell scripts:
+
+```powershell
+# 1. config
+Copy-Item .env.example .env    # then edit values
+
+# 2. (optional) put a production dump named enamad.sql.gz in the repo root,
+#    then import it and start MySQL + web panel in Docker:
+.\scripts\import-docker.ps1
+
+# or run the web panel directly with Python (Flask dev server, auto-reload):
+docker compose up -d mysql     # DB in Docker (published on 127.0.0.1:3307)
+.\scripts\run-web-local.ps1
+```
+
+Web panel: `http://127.0.0.1:8095/` — MySQL from host: `127.0.0.1:3307`.
+
+> ⚠️ Don't start the `bot` / `bale-bot` services locally while the same tokens
+> are running on a server — Telegram allows only one polling instance per token
+> (`Conflict: terminated by other getUpdates request`). For local work bring up
+> only `mysql` and `web`.
+
+Details in [DOCS.md](DOCS.md#windows-local-development).
+
+---
+
 ## Bots (Telegram & Bale)
 
 Both bots share the same features:

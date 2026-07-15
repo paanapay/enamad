@@ -54,4 +54,17 @@
 
   <button class="btn" type="submit" style="margin-top:16px">ذخیره تنظیمات</button>
 </form>
+
+<form method="post" action="{{ url_for('crm.settings_test_email') }}" class="panel" autocomplete="off">
+  <h2 style="margin-top:0">تست ارسال ایمیل</h2>
+  <p class="muted">
+    یک ایمیل تستی با تنظیمات SMTP <b>ذخیره‌شده</b> ارسال می‌شود (حتی اگر حالت آزمایشی روشن باشد).
+    اگر تنظیمات را تازه تغییر داده‌اید، اول «ذخیره تنظیمات» را بزنید.
+  </p>
+  <div class="form-row">
+    <label>آدرس گیرنده</label>
+    <input type="email" name="test_email" required dir="ltr" placeholder="you@example.com" autocomplete="off" style="width:100%;max-width:360px">
+  </div>
+  <button class="btn" type="submit">ارسال ایمیل تستی</button>
+</form>
 {% endblock %}

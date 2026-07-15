@@ -950,6 +950,65 @@ def ensure_bot_users_table(conn) -> None:
             )
 
 
+def ensure_support_table(conn) -> None:
+    """Support conversations between bot users and admins (both platforms)."""
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS support_messages (
+              id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+              platform VARCHAR(16) NOT NULL,
+              user_id BIGINT NOT NULL,
+              direction VARCHAR(8) NOT NULL DEFAULT 'in',
+              text TEXT NULL,
+              admin_chat_id BIGINT NULL,
+              admin_message_id BIGINT NULL,
+              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              KEY idx_support_admin_msg (platform, admin_chat_id, admin_message_id),
+              KEY idx_support_user (platform, user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """
+        )
+
+
+def record_support_message(
+    conn,
+    *,
+    platform: str,
+    user_id: int,
+    direction: str,
+    text: str,
+    admin_chat_id: int | None = None,
+    admin_message_id: int | None = None,
+) -> None:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO support_messages
+                (platform, user_id, direction, text, admin_chat_id, admin_message_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (platform, user_id, direction, text, admin_chat_id, admin_message_id),
+        )
+
+
+def find_support_sender(
+    conn, *, platform: str, admin_chat_id: int, admin_message_id: int
+) -> int | None:
+    """Map an admin's reply (to a forwarded support message) back to the user."""
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT user_id FROM support_messages
+            WHERE platform = %s AND admin_chat_id = %s AND admin_message_id = %s
+            ORDER BY id DESC LIMIT 1
+            """,
+            (platform, admin_chat_id, admin_message_id),
+        )
+        row = cursor.fetchone()
+    return int(row["user_id"]) if row else None
+
+
 def record_bot_user(
     conn,
     *,

@@ -271,6 +271,74 @@ docker compose exec mysql mysqladmin ping -h 127.0.0.1 -uroot -p
 
 ---
 
+## Windows (local development)
+
+Local workflow for developing the web panel / queries against a copy of the
+production database. Requires **Docker Desktop**, **Python 3.10+** and PowerShell.
+
+### 1. Configuration
+
+```powershell
+Copy-Item .env.example .env
+```
+
+For local use you can leave `MYSQL_PASSWORD` empty and set
+`WEB_ADMIN_PASSWORD` to anything (defaults to `localdev` in the helper script).
+
+### 2. Import a database dump (optional)
+
+Create a dump on the server (`scripts/server-dump.sh`), download it as
+`enamad.sql.gz` into the repo root, then:
+
+```powershell
+.\scripts\import-docker.ps1
+```
+
+The script:
+
+1. starts the `mysql` container (MariaDB, published on `127.0.0.1:3307`),
+2. imports `enamad.sql.gz` via `scripts/import-docker.py`
+   (handles utf8mb4 and disables foreign-key checks during import),
+3. builds and starts the `web` container with the
+   `docker-compose.local.yml` override → `http://127.0.0.1:8095/`.
+
+### 3. Run the web panel with Python instead (faster iteration)
+
+The Flask dev server auto-reloads on code changes, so this is more convenient
+while editing:
+
+```powershell
+docker compose up -d mysql        # only the DB in Docker
+.\scripts\run-web-local.ps1       # installs Flask/PyMySQL if missing
+```
+
+Opens `http://127.0.0.1:8095/` — login `admin` / `WEB_ADMIN_PASSWORD`
+(or `localdev` if unset). The script points the app at MySQL on
+`127.0.0.1:3307` automatically.
+
+### 4. Running bots locally
+
+`python telegram_bot.py` / `python bale_bot.py` work on Windows too, **but**
+only one polling instance per bot token may run anywhere. If the bots are
+already running on a server with the same token, a local instance causes:
+
+```text
+telegram.error.Conflict: terminated by other getUpdates request
+```
+
+Either stop the server bots first (`docker compose stop bot bale-bot`) or use
+separate test tokens locally.
+
+### Useful scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/pull-db.ps1` | Dump the DB on the server, download and import locally |
+| `scripts/import-docker.ps1` | Import `enamad.sql.gz` into Docker MySQL + start web |
+| `scripts/run-web-local.ps1` | Run the web panel with the Flask dev server |
+
+---
+
 ## Telegram bot
 
 ### Setup
