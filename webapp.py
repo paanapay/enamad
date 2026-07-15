@@ -404,6 +404,8 @@ def estelam():
 @login_required
 @super_admin_required
 def users():
+    from bot_broadcast import configured_platforms
+
     try:
         page = max(0, int(request.args.get("page", 0)))
     except ValueError:
@@ -414,8 +416,57 @@ def users():
         total = q.count_bot_users(conn)
     pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
     return render_template(
-        "users.html", rows=rows, total=total, page=page, pages=pages
+        "users.html",
+        rows=rows,
+        total=total,
+        page=page,
+        pages=pages,
+        send_platforms=configured_platforms(),
     )
+
+
+@app.route("/users/send", methods=["POST"])
+@login_required
+@super_admin_required
+def users_send():
+    from bot_broadcast import PLATFORMS, broadcast
+
+    text = (request.form.get("message") or "").strip()
+    mode = (request.form.get("mode") or "selected").strip()
+    platform_filter = (request.form.get("platform") or "").strip()
+    page = request.form.get("page", 0)
+
+    if not text:
+        flash("متن پیام خالی است.", "error")
+        return redirect(url_for("users", page=page))
+
+    if mode == "all":
+        with mysql_connection(app_config().mysql) as conn:
+            targets = q.get_all_bot_user_targets(
+                conn, platform=platform_filter if platform_filter in PLATFORMS else ""
+            )
+    else:
+        targets = []
+        for raw in request.form.getlist("targets"):
+            # checkbox values look like "telegram:123456789"
+            platform, _, user_id = raw.partition(":")
+            if platform in PLATFORMS and user_id.strip().lstrip("-").isdigit():
+                targets.append((platform, int(user_id)))
+
+    if not targets:
+        flash("هیچ کاربری برای ارسال انتخاب نشده.", "error")
+        return redirect(url_for("users", page=page))
+
+    results = broadcast(targets, text)
+    if results["failed"]:
+        detail = "؛ ".join(results["errors"][:5])
+        flash(
+            f"ارسال شد به {results['sent']} کاربر — {results['failed']} ناموفق. {detail}",
+            "error" if not results["sent"] else "ok",
+        )
+    else:
+        flash(f"پیام به {results['sent']} کاربر ارسال شد.", "ok")
+    return redirect(url_for("users", page=page))
 
 
 @app.route("/system/logs")

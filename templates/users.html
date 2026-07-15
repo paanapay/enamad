@@ -3,14 +3,56 @@
 {% block title %}کاربران ربات{% endblock %}
 {% block body %}
 <h1>کاربران ربات <span class="muted" style="font-size:15px">({{ total|group }})</span></h1>
+
+{% if send_platforms %}
+<form method="post" action="{{ url_for('users_send') }}" class="panel" id="send-form"
+      onsubmit="return confirmSend();">
+  <h2 style="margin-top:0">ارسال پیام به کاربران</h2>
+  <div class="form-row">
+    <textarea name="message" rows="4" required style="width:100%"
+              placeholder="متن پیام… (به‌صورت متن ساده به تلگرام و بله ارسال می‌شود)"></textarea>
+  </div>
+  <input type="hidden" name="page" value="{{ page }}">
+  <div class="searchbar" style="margin-bottom:0">
+    <select name="mode" id="send-mode" onchange="onModeChange()">
+      <option value="selected">فقط کاربران انتخاب‌شده در جدول</option>
+      <option value="all">همه کاربران</option>
+    </select>
+    <select name="platform" id="send-platform" style="display:none">
+      <option value="">هر دو پلتفرم</option>
+      {% for p in send_platforms %}
+      <option value="{{ p }}">فقط {{ 'تلگرام' if p == 'telegram' else 'بله' }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn" type="submit">ارسال پیام</button>
+    <span class="muted" id="selected-count" style="font-size:13px"></span>
+  </div>
+  <p class="hint muted" style="margin:8px 0 0">
+    پلتفرم‌های فعال: {{ send_platforms|join('، ') }} — برای انتخاب کاربر، تیک ردیف‌های جدول را بزنید.
+  </p>
+</form>
+{% else %}
+<div class="flash error">توکن ربات (BOT_TOKEN / BALE_BOT_TOKEN) در دسترس پنل نیست؛ ارسال پیام غیرفعال است.</div>
+{% endif %}
+
 <div class="panel" style="padding:0;overflow:auto">
   <table>
     <thead>
-      <tr><th>پلتفرم</th><th>کاربر</th><th>شناسه</th><th>تعامل</th><th>آخرین اقدام</th><th>آخرین بازدید</th></tr>
+      <tr>
+        {% if send_platforms %}<th style="width:36px"><input type="checkbox" id="check-all" title="انتخاب همه این صفحه"></th>{% endif %}
+        <th>پلتفرم</th><th>کاربر</th><th>شناسه</th><th>تعامل</th><th>آخرین اقدام</th><th>آخرین بازدید</th>
+      </tr>
     </thead>
     <tbody>
       {% for u in rows %}
       <tr>
+        {% if send_platforms %}
+        <td>
+          <input type="checkbox" class="user-check" form="send-form" name="targets"
+                 value="{{ u.platform }}:{{ u.user_id }}"
+                 {% if u.platform not in send_platforms %}disabled title="توکن این پلتفرم تنظیم نیست"{% endif %}>
+        </td>
+        {% endif %}
         <td><span class="tag">{{ u.platform }}</span></td>
         <td>{{ u.first_name or '' }} {{ u.last_name or '' }}
           {% if u.username %}<div class="muted mono" style="font-size:12px">@{{ u.username }}</div>{% endif %}</td>
@@ -20,7 +62,7 @@
         <td class="mono">{{ u.last_seen or '—' }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="empty">کاربری ثبت نشده.</td></tr>
+      <tr><td colspan="{{ 7 if send_platforms else 6 }}" class="empty">کاربری ثبت نشده.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -30,4 +72,53 @@
   <span>صفحه {{ (page+1)|group }} از {{ (pages if pages else 1)|group }}</span>
   {% if page + 1 < pages %}<a href="{{ url_for('users', page=page+1) }}">بعدی ›</a>{% else %}<span class="disabled">بعدی ›</span>{% endif %}
 </div>
+{% endblock %}
+{% block scripts %}
+{% if send_platforms %}
+<script>
+function selectedBoxes() {
+  return Array.prototype.filter.call(
+    document.querySelectorAll('.user-check'),
+    cb => cb.checked && !cb.disabled
+  );
+}
+
+function updateCount() {
+  var n = selectedBoxes().length;
+  document.getElementById('selected-count').textContent =
+    n ? (n + ' کاربر انتخاب شده') : '';
+}
+
+function onModeChange() {
+  var all = document.getElementById('send-mode').value === 'all';
+  document.getElementById('send-platform').style.display = all ? '' : 'none';
+}
+
+function confirmSend() {
+  var mode = document.getElementById('send-mode').value;
+  if (mode === 'all') {
+    var plat = document.getElementById('send-platform');
+    var label = plat.options[plat.selectedIndex].text;
+    return confirm('پیام به «همه کاربران» ({{ total|group }} نفر — ' + label + ') ارسال شود؟');
+  }
+  var n = selectedBoxes().length;
+  if (!n) { alert('هیچ کاربری انتخاب نشده است.'); return false; }
+  return confirm('پیام به ' + n + ' کاربر انتخاب‌شده ارسال شود؟');
+}
+
+document.querySelectorAll('.user-check').forEach(cb =>
+  cb.addEventListener('change', updateCount));
+
+var checkAll = document.getElementById('check-all');
+if (checkAll) {
+  checkAll.addEventListener('change', function () {
+    document.querySelectorAll('.user-check').forEach(cb => {
+      if (!cb.disabled) cb.checked = checkAll.checked;
+    });
+    updateCount();
+  });
+}
+onModeChange();
+</script>
+{% endif %}
 {% endblock %}

@@ -489,6 +489,18 @@ def count_bot_users(conn) -> int:
         return int(cursor.fetchone()["c"])
 
 
+def get_all_bot_user_targets(conn, *, platform: str = "") -> list[tuple[str, int]]:
+    """All (platform, user_id) pairs for broadcast, optionally one platform."""
+    sql = "SELECT platform, user_id FROM bot_users"
+    params: list = []
+    if platform:
+        sql += " WHERE platform = %s"
+        params.append(platform)
+    with conn.cursor() as cursor:
+        cursor.execute(sql, params)
+        return [(row["platform"], int(row["user_id"])) for row in cursor.fetchall()]
+
+
 def get_domains_by_phone_type(
     conn, phone_type: str, *, offset: int = 0, limit: int = 50
 ) -> list[dict]:

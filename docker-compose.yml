@@ -100,6 +100,9 @@ services:
       WEB_ADMIN_PASSWORD: ${WEB_ADMIN_PASSWORD:-}
       WEB_SECRET_KEY: ${WEB_SECRET_KEY:-}
       WEB_LIVE_SEARCH: ${WEB_LIVE_SEARCH:-yes}
+      # Needed for "message bot users" in the panel (telegram token comes
+      # from app_env's BOT_TOKEN).
+      BALE_BOT_TOKEN: ${BALE_BOT_TOKEN:-}
     depends_on:
       init:
         condition: service_completed_successfully
