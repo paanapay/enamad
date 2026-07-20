@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}ثبت‌نام{% endblock %}
+{% block body %}
+<div style="max-width:420px;margin:6vh auto">
+  <div class="panel" style="text-align:center">
+    <div style="font-size:44px;margin-bottom:6px">🛡️</div>
+    <h1 style="justify-content:center">ثبت‌نام</h1>
+    <p class="muted" style="margin-top:-8px">حساب کاربری و پروژه CRM خود را بسازید</p>
+    <form method="post" style="margin-top:18px;text-align:right" autocomplete="on">
+      <label class="muted" style="font-size:12px">نام کاربری</label>
+      <input type="text" name="username" required autofocus
+             autocomplete="username"
+             style="width:100%;margin-bottom:10px" dir="ltr">
+      <label class="muted" style="font-size:12px">نام نمایشی</label>
+      <input type="text" name="display_name"
+             autocomplete="name"
+             style="width:100%;margin-bottom:10px">
+      <label class="muted" style="font-size:12px">نام پروژه</label>
+      <input type="text" name="project_name" required
+             placeholder="مثلاً فروشگاه من"
+             style="width:100%;margin-bottom:10px">
+      <label class="muted" style="font-size:12px">رمز عبور</label>
+      <input type="password" name="password" required minlength="6"
+             autocomplete="new-password"
+             style="width:100%;margin-bottom:10px">
+      <label class="muted" style="font-size:12px">تکرار رمز عبور</label>
+      <input type="password" name="confirm_password" required minlength="6"
+             autocomplete="new-password"
+             style="width:100%;margin-bottom:14px">
+      <button class="btn" style="width:100%" type="submit">ثبت‌نام</button>
+    </form>
+    <p class="muted" style="font-size:13px;margin-top:14px">
+      حساب دارید؟ <a href="{{ url_for('login') }}">ورود</a>
+    </p>
+  </div>
+</div>
+{% endblock %}

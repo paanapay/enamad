@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}پروژه‌ها{% endblock %}
+{% block body %}
+<h1>پروژه‌های من</h1>
+<p class="muted">هر پروژه CRM جداگانه‌ای دارد؛ دیتابیس دامنه‌ها برای همه مشترک است.</p>
+
+{% if projects %}
+<div class="panel" style="padding:0;overflow:auto;margin-top:12px">
+  <table>
+    <thead><tr><th>نام</th><th>نقش شما</th><th>وضعیت</th><th></th></tr></thead>
+    <tbody>
+      {% for p in projects %}
+      <tr>
+        <td>{{ p.name }}{% if current_project_id == p.id %} <span class="badge ok">فعال</span>{% endif %}</td>
+        <td>{{ 'مالک' if p.member_role=='owner' else ('مدیر' if p.member_role=='admin' else 'عضو') }}</td>
+        <td>{{ 'فعال' if p.is_active else 'غیرفعال' }}</td>
+        <td>
+          {% if current_project_id != p.id %}
+          <form method="post" action="{{ url_for('projects_switch', project_id=p.id) }}" style="display:inline">
+            <button class="btn" type="submit">انتخاب</button>
+          </form>
+          {% else %}
+          <a href="{{ url_for('dashboard') }}">ورود به پنل</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="muted">هنوز پروژه‌ای ندارید. یکی بسازید.</p>
+{% endif %}
+
+<div class="panel" style="margin-top:20px;max-width:420px">
+  <h2 style="margin-top:0">پروژه جدید</h2>
+  <form method="post">
+    <input type="text" name="name" required placeholder="نام پروژه" style="width:100%;margin-bottom:12px">
+    <button class="btn" type="submit">ساخت پروژه</button>
+  </form>
+</div>
+{% endblock %}

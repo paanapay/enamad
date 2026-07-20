@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% set active = 'members' %}
+{% block title %}افزودن عضو{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('crm.members_list') }}">‹ بازگشت</a></p>
+<h1>افزودن عضو به پروژه</h1>
+
+<form method="post" class="panel" autocomplete="off" style="max-width:480px">
+  <div class="form-row">
+    <label><input type="radio" name="mode" value="existing" checked> کاربر موجود (با نام کاربری)</label>
+  </div>
+  <div class="form-row">
+    <label><input type="radio" name="mode" value="new"> ساخت کاربر جدید و افزودن به پروژه</label>
+  </div>
+  <div class="form-row">
+    <label>نام کاربری *</label>
+    <input type="text" name="username" required dir="ltr" autocomplete="off" style="width:100%">
+  </div>
+  <div class="form-row">
+    <label>نام نمایشی (فقط برای کاربر جدید)</label>
+    <input type="text" name="display_name" autocomplete="off" style="width:100%">
+  </div>
+  <div class="form-row">
+    <label>رمز عبور (فقط برای کاربر جدید)</label>
+    <input type="password" name="password" autocomplete="new-password" style="width:100%">
+  </div>
+  <div class="form-row">
+    <label>نقش در پروژه</label>
+    <select name="role">
+      {% for role in roles %}
+      <option value="{{ role }}" {{ 'selected' if role=='admin' else '' }}>{{ role_labels[role] }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <button class="btn" type="submit">افزودن</button>
+</form>
+{% endblock %}

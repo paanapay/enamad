@@ -26,8 +26,13 @@ from contact_utils import (
 from crm_db import (
     CALL_OUTCOMES,
     CRM_SETTINGS_KEYS,
+    PROJECT_ADMIN,
+    PROJECT_MEMBER,
+    PROJECT_OWNER,
+    PROJECT_ROLES,
     ROLE_ADMIN,
     ROLE_SUPER,
+    add_project_member,
     change_admin_password,
     create_admin,
     create_call_log,
@@ -36,13 +41,12 @@ from crm_db import (
     count_call_logs,
     delete_automation_rule,
     delete_template,
+    find_admin_by_username,
     get_admin_by_id,
     get_all_settings,
     get_automation_rule,
     get_call_log,
     get_campaign,
-    get_call_logs_for_domain,
-    get_latest_call_for_domain,
     get_template,
     is_dry_run,
     list_admins,
@@ -50,13 +54,16 @@ from crm_db import (
     list_call_logs,
     list_campaigns,
     list_message_logs,
+    list_project_members,
     list_templates,
     preview_template,
+    remove_project_member,
     save_automation_rule,
     save_settings,
     save_template,
     update_admin,
     update_campaign_counts,
+    update_project_member_role,
     verify_admin_password,
     count_message_logs,
     message_log_stats,
@@ -70,6 +77,11 @@ from crm_service import (
 )
 from db import mysql_connection
 from email_presets import list_email_presets
+from project_access import (
+    can_manage_project,
+    current_project_id,
+    is_platform_super,
+)
 
 crm_bp = Blueprint("crm", __name__, url_prefix="/crm")
 
@@ -101,6 +113,16 @@ def login_required(view):
     def wrapper(*args, **kwargs):
         if not session.get("admin_id"):
             return redirect(url_for("login", next=request.path))
+        if not session.get("project_id"):
+            try:
+                with mysql_connection(_config().mysql) as conn:
+                    from project_access import activate_user_project
+
+                    activate_user_project(conn, int(session["admin_id"]))
+            except Exception:  # noqa: BLE001
+                pass
+            if not session.get("project_id"):
+                return redirect(url_for("projects_home"))
         return view(*args, **kwargs)
 
     return wrapper
@@ -109,11 +131,28 @@ def login_required(view):
 def super_admin_required(view):
     @wraps(view)
     def wrapper(*args, **kwargs):
-        if session.get("admin_role") != ROLE_SUPER:
+        if not is_platform_super():
             abort(403)
         return view(*args, **kwargs)
 
     return wrapper
+
+
+def project_admin_required(view):
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        if not can_manage_project():
+            abort(403)
+        return view(*args, **kwargs)
+
+    return wrapper
+
+
+def _project_id() -> int:
+    pid = current_project_id()
+    if not pid:
+        abort(403)
+    return pid
 
 
 def _current_admin() -> dict:
@@ -122,17 +161,22 @@ def _current_admin() -> dict:
         "username": session.get("admin_username"),
         "display_name": session.get("admin_display_name"),
         "role": session.get("admin_role"),
-        "is_super": session.get("admin_role") == ROLE_SUPER,
+        "is_super": is_platform_super(),
+        "can_manage_project": can_manage_project(),
     }
 
 
 def _test_mode_enabled() -> bool:
+    project_id = current_project_id()
+    if not project_id:
+        return False
+
     def produce():
         with mysql_connection(_config().mysql) as conn:
-            return is_dry_run(get_all_settings(conn))
+            return is_dry_run(get_all_settings(conn, project_id=project_id))
 
     try:
-        return bool(cached("crm_dry_run", 30, produce))
+        return bool(cached(f"crm_dry_run:{project_id}", 30, produce))
     except Exception:  # noqa: BLE001
         return False
 
@@ -140,8 +184,16 @@ def _test_mode_enabled() -> bool:
 @crm_bp.app_context_processor
 def inject_admin():
     if session.get("admin_id"):
+        project = None
+        if session.get("project_id"):
+            project = {
+                "id": session.get("project_id"),
+                "name": session.get("project_name"),
+                "role": session.get("project_role"),
+            }
         return {
             "current_admin": _current_admin(),
+            "current_project": project,
             "crm_test_mode": _test_mode_enabled(),
         }
     return {}
@@ -150,21 +202,25 @@ def inject_admin():
 @crm_bp.route("/")
 @login_required
 def dashboard():
+    project_id = _project_id()
+
     def produce():
         with mysql_connection(_config().mysql) as conn:
             return {
-                "stats": crm_stats(conn),
-                "campaigns": list_campaigns(conn, limit=5),
+                "stats": crm_stats(conn, project_id=project_id),
+                "campaigns": list_campaigns(conn, project_id=project_id, limit=5),
             }
 
     ttl = int(os.environ.get("WEB_STATS_CACHE_TTL", "60"))
-    data = cached("crm_dashboard", ttl, produce)
+    data = cached(f"crm_dashboard:{project_id}", ttl, produce)
     return render_template("crm/dashboard.html", **data)
 
 
 @crm_bp.route("/settings", methods=["GET", "POST"])
 @login_required
+@project_admin_required
 def settings():
+    project_id = _project_id()
     if request.method == "POST":
         data = {key: request.form.get(key, "") for key in CRM_SETTINGS_KEYS}
         data["smtp_tls"] = "yes" if request.form.get("smtp_tls") == "on" else "no"
@@ -173,19 +229,20 @@ def settings():
         )
         data["dry_run"] = "yes" if request.form.get("dry_run") == "on" else "no"
         with mysql_connection(_config().mysql) as conn:
-            save_settings(conn, data)
+            save_settings(conn, data, project_id=project_id)
             conn.commit()
-        invalidate("crm_dry_run")
+        invalidate(f"crm_dry_run:{project_id}")
         flash("تنظیمات ذخیره شد.", "ok")
         return redirect(url_for("crm.settings"))
 
     with mysql_connection(_config().mysql) as conn:
-        stored = get_all_settings(conn)
+        stored = get_all_settings(conn, project_id=project_id)
     return render_template("crm/settings.html", settings=stored)
 
 
 @crm_bp.route("/settings/test-email", methods=["POST"])
 @login_required
+@project_admin_required
 def settings_test_email():
     """Send a test email with the saved SMTP settings (bypasses dry-run)."""
     from email_sender import EmailConfig, EmailSendError, send_email
@@ -195,8 +252,9 @@ def settings_test_email():
         flash("آدرس ایمیل معتبر وارد کنید.", "error")
         return redirect(url_for("crm.settings"))
 
+    project_id = _project_id()
     with mysql_connection(_config().mysql) as conn:
-        stored = get_all_settings(conn)
+        stored = get_all_settings(conn, project_id=project_id)
 
     config = EmailConfig.from_settings(stored)
     if not config.is_configured():
@@ -231,8 +289,9 @@ def settings_test_email():
 @login_required
 def templates_list():
     channel = request.args.get("channel")
+    project_id = _project_id()
     with mysql_connection(_config().mysql) as conn:
-        rows = list_templates(conn, channel=channel or None)
+        rows = list_templates(conn, project_id=project_id, channel=channel or None)
     return render_template("crm/templates_list.html", rows=rows, channel=channel)
 
 
@@ -240,6 +299,7 @@ def templates_list():
 @crm_bp.route("/templates/<int:template_id>/edit", methods=["GET", "POST"])
 @login_required
 def template_form(template_id: int | None = None):
+    project_id = _project_id()
     if request.method == "POST":
         token_mapping = {}
         for kn_token in KAVENEGAR_TOKENS:
@@ -262,7 +322,9 @@ def template_form(template_id: int | None = None):
             flash("نام قالب الزامی است.", "error")
         else:
             with mysql_connection(_config().mysql) as conn:
-                save_template(conn, data, template_id=template_id)
+                save_template(
+                    conn, data, project_id=project_id, template_id=template_id
+                )
                 conn.commit()
             flash("قالب ذخیره شد.", "ok")
             return redirect(url_for("crm.templates_list"))
@@ -270,7 +332,7 @@ def template_form(template_id: int | None = None):
     row = None
     if template_id:
         with mysql_connection(_config().mysql) as conn:
-            row = get_template(conn, template_id)
+            row = get_template(conn, template_id, project_id=project_id)
         if not row:
             abort(404)
     return render_template(
@@ -286,8 +348,9 @@ def template_form(template_id: int | None = None):
 @crm_bp.route("/templates/<int:template_id>/delete", methods=["POST"])
 @login_required
 def template_delete(template_id: int):
+    project_id = _project_id()
     with mysql_connection(_config().mysql) as conn:
-        delete_template(conn, template_id)
+        delete_template(conn, template_id, project_id=project_id)
         conn.commit()
     flash("قالب حذف شد.", "ok")
     return redirect(url_for("crm.templates_list"))
@@ -296,9 +359,10 @@ def template_delete(template_id: int):
 @crm_bp.route("/automations")
 @login_required
 def automations_list():
+    project_id = _project_id()
     with mysql_connection(_config().mysql) as conn:
-        rows = list_automation_rules(conn)
-        templates = list_templates(conn)
+        rows = list_automation_rules(conn, project_id=project_id)
+        templates = list_templates(conn, project_id=project_id)
     return render_template("crm/automations.html", rows=rows, templates=templates)
 
 
@@ -306,6 +370,7 @@ def automations_list():
 @crm_bp.route("/automations/<int:rule_id>/edit", methods=["GET", "POST"])
 @login_required
 def automation_form(rule_id: int | None = None):
+    project_id = _project_id()
     if request.method == "POST":
         data = {
             "name": request.form.get("name", "").strip(),
@@ -318,17 +383,22 @@ def automation_form(rule_id: int | None = None):
         if not data["name"] or not data["template_id"]:
             flash("نام و قالب الزامی است.", "error")
         else:
-            with mysql_connection(_config().mysql) as conn:
-                save_automation_rule(conn, data, rule_id=rule_id)
-                conn.commit()
-            flash("قانون خودکار ذخیره شد.", "ok")
-            return redirect(url_for("crm.automations_list"))
+            try:
+                with mysql_connection(_config().mysql) as conn:
+                    save_automation_rule(
+                        conn, data, project_id=project_id, rule_id=rule_id
+                    )
+                    conn.commit()
+                flash("قانون خودکار ذخیره شد.", "ok")
+                return redirect(url_for("crm.automations_list"))
+            except ValueError as exc:
+                flash(str(exc), "error")
 
     row = None
     with mysql_connection(_config().mysql) as conn:
-        templates = list_templates(conn)
+        templates = list_templates(conn, project_id=project_id)
         if rule_id:
-            row = get_automation_rule(conn, rule_id)
+            row = get_automation_rule(conn, rule_id, project_id=project_id)
             if not row:
                 abort(404)
     return render_template("crm/automation_form.html", row=row, templates=templates)
@@ -337,8 +407,9 @@ def automation_form(rule_id: int | None = None):
 @crm_bp.route("/automations/<int:rule_id>/delete", methods=["POST"])
 @login_required
 def automation_delete(rule_id: int):
+    project_id = _project_id()
     with mysql_connection(_config().mysql) as conn:
-        delete_automation_rule(conn, rule_id)
+        delete_automation_rule(conn, rule_id, project_id=project_id)
         conn.commit()
     flash("قانون حذف شد.", "ok")
     return redirect(url_for("crm.automations_list"))
@@ -347,8 +418,9 @@ def automation_delete(rule_id: int):
 @crm_bp.route("/campaigns")
 @login_required
 def campaigns_list():
+    project_id = _project_id()
     with mysql_connection(_config().mysql) as conn:
-        rows = list_campaigns(conn)
+        rows = list_campaigns(conn, project_id=project_id)
     return render_template("crm/campaigns.html", rows=rows)
 
 
@@ -380,6 +452,7 @@ def _parse_selected_domain_ids(form_or_args) -> list[int]:
 @login_required
 def campaign_new():
     page_size = 50
+    project_id = _project_id()
     post_selected_ids: list[int] = []
     if request.method == "POST":
         domain_ids = _parse_selected_domain_ids(request.form)
@@ -395,23 +468,27 @@ def campaign_new():
             flash("نام، قالب و حداقل یک دامنه الزامی است.", "error")
             post_selected_ids = domain_ids
         else:
-            with mysql_connection(_config().mysql) as conn:
-                campaign_id = create_campaign(conn, data)
-                # Mark as queued before the worker picks it up so the detail
-                # page shows a meaningful status immediately.
+            try:
+                with mysql_connection(_config().mysql) as conn:
+                    campaign_id = create_campaign(conn, data, project_id=project_id)
+                    # Mark as queued before the worker picks it up so the detail
+                    # page shows a meaningful status immediately.
+                    if request.form.get("send_now") == "on":
+                        update_campaign_counts(conn, campaign_id, status="queued")
+                    conn.commit()
                 if request.form.get("send_now") == "on":
-                    update_campaign_counts(conn, campaign_id, status="queued")
-                conn.commit()
-            if request.form.get("send_now") == "on":
-                start_campaign_async(_config().mysql, campaign_id)
-                flash(
-                    f"کمپین در صف ارسال قرار گرفت ({len(domain_ids)} دامنه). "
-                    "پیشرفت ارسال در همین صفحه به‌روز می‌شود.",
-                    "ok",
-                )
+                    start_campaign_async(_config().mysql, campaign_id)
+                    flash(
+                        f"کمپین در صف ارسال قرار گرفت ({len(domain_ids)} دامنه). "
+                        "پیشرفت ارسال در همین صفحه به‌روز می‌شود.",
+                        "ok",
+                    )
+                    return redirect(url_for("crm.campaign_detail", campaign_id=campaign_id))
+                flash("کمپین ذخیره شد.", "ok")
                 return redirect(url_for("crm.campaign_detail", campaign_id=campaign_id))
-            flash("کمپین ذخیره شد.", "ok")
-            return redirect(url_for("crm.campaign_detail", campaign_id=campaign_id))
+            except ValueError as exc:
+                flash(str(exc), "error")
+                post_selected_ids = domain_ids
 
     query = (request.args.get("q") or "").strip()
     phone_filter = request.args.get("phone_type", "")
@@ -421,7 +498,7 @@ def campaign_new():
     except ValueError:
         page = 0
     with mysql_connection(_config().mysql) as conn:
-        templates = list_templates(conn)
+        templates = list_templates(conn, project_id=project_id)
         from crm_db import count_domains_for_campaign, list_domains_for_campaign
 
         total = count_domains_for_campaign(
@@ -429,6 +506,7 @@ def campaign_new():
         )
         domains = list_domains_for_campaign(
             conn,
+            project_id=project_id,
             query=query,
             phone_type=phone_filter,
             offset=page * page_size,
@@ -452,19 +530,26 @@ def campaign_new():
 @crm_bp.route("/campaigns/<int:campaign_id>")
 @login_required
 def campaign_detail(campaign_id: int):
+    project_id = _project_id()
     try:
         page = max(0, int(request.args.get("page", 0)))
     except ValueError:
         page = 0
     page_size = 50
     with mysql_connection(_config().mysql) as conn:
-        campaign = get_campaign(conn, campaign_id)
+        campaign = get_campaign(conn, campaign_id, project_id=project_id)
         if not campaign:
             abort(404)
         logs = list_message_logs(
-            conn, campaign_id=campaign_id, limit=page_size, offset=page * page_size
+            conn,
+            project_id=project_id,
+            campaign_id=campaign_id,
+            limit=page_size,
+            offset=page * page_size,
         )
-        total_logs = count_message_logs(conn, campaign_id=campaign_id)
+        total_logs = count_message_logs(
+            conn, project_id=project_id, campaign_id=campaign_id
+        )
     pages = (total_logs + page_size - 1) // page_size
     return render_template(
         "crm/campaign_detail.html",
@@ -502,6 +587,7 @@ def _log_filter_args():
 @crm_bp.route("/logs")
 @login_required
 def message_logs():
+    project_id = _project_id()
     channel, status, date_from, date_to, search = _log_filter_args()
     try:
         page = max(0, int(request.args.get("page", 0)))
@@ -511,6 +597,7 @@ def message_logs():
     with mysql_connection(_config().mysql) as conn:
         stats = message_log_stats(
             conn,
+            project_id=project_id,
             channel=channel,
             status=status,
             date_from=date_from,
@@ -519,6 +606,7 @@ def message_logs():
         )
         total = count_message_logs(
             conn,
+            project_id=project_id,
             channel=channel,
             status=status,
             date_from=date_from,
@@ -527,6 +615,7 @@ def message_logs():
         )
         logs = list_message_logs(
             conn,
+            project_id=project_id,
             channel=channel,
             status=status,
             date_from=date_from,
@@ -559,6 +648,7 @@ def message_logs():
 def message_logs_export():
     from flask import Response
 
+    project_id = _project_id()
     channel, status, date_from, date_to, search = _log_filter_args()
 
     def generate():
@@ -591,6 +681,7 @@ def message_logs_export():
         with mysql_connection(_config().mysql) as conn:
             for row in iter_message_logs_for_export(
                 conn,
+                project_id=project_id,
                 channel=channel,
                 status=status,
                 date_from=date_from,
@@ -628,8 +719,9 @@ def message_logs_export():
 @crm_bp.route("/campaigns/<int:campaign_id>/send", methods=["POST"])
 @login_required
 def campaign_send(campaign_id: int):
+    project_id = _project_id()
     with mysql_connection(_config().mysql) as conn:
-        campaign = get_campaign(conn, campaign_id)
+        campaign = get_campaign(conn, campaign_id, project_id=project_id)
         if not campaign:
             abort(404)
         if campaign["status"] in ("queued", "running") or is_campaign_running(campaign_id):
@@ -647,8 +739,9 @@ def campaign_send(campaign_id: int):
 @crm_bp.route("/campaigns/<int:campaign_id>/status")
 @login_required
 def campaign_status(campaign_id: int):
+    project_id = _project_id()
     with mysql_connection(_config().mysql) as conn:
-        campaign = get_campaign(conn, campaign_id)
+        campaign = get_campaign(conn, campaign_id, project_id=project_id)
     if not campaign:
         abort(404)
     total = int(campaign.get("total_count") or 0)
@@ -755,10 +848,11 @@ def change_password():
 @crm_bp.route("/preview", methods=["POST"])
 @login_required
 def preview():
+    project_id = _project_id()
     template_id = int(request.form.get("template_id", 0))
     domain_id = int(request.form.get("domain_id", 0))
     with mysql_connection(_config().mysql) as conn:
-        template = get_template(conn, template_id)
+        template = get_template(conn, template_id, project_id=project_id)
         domain = q.get_domain_by_id(conn, domain_id)
     if not template or not domain:
         return "قالب یا دامنه یافت نشد", 404
@@ -861,6 +955,7 @@ def template_test_send():
             domain_row=row,
             template=template,
             channel=channel,
+            project_id=_project_id(),
             mobile_only=not bool(override),
             force_send=True,
             override_recipient=override,
@@ -904,6 +999,7 @@ def template_test_send():
 @crm_bp.route("/calls")
 @login_required
 def calls_list():
+    project_id = _project_id()
     filter_type = request.args.get("filter", "all")
     if filter_type not in ("all", "today", "interested"):
         filter_type = "all"
@@ -916,10 +1012,16 @@ def calls_list():
 
     with mysql_connection(_config().mysql) as conn:
         rows = list_call_logs(
-            conn, filter_type=filter_type, limit=page_size, offset=offset
+            conn,
+            project_id=project_id,
+            filter_type=filter_type,
+            limit=page_size,
+            offset=offset,
         )
-        total = count_call_logs(conn, filter_type=filter_type)
-        stats = call_stats(conn)
+        total = count_call_logs(
+            conn, project_id=project_id, filter_type=filter_type
+        )
+        stats = call_stats(conn, project_id=project_id)
 
     pages = (total + page_size - 1) // page_size
     return render_template(
@@ -937,6 +1039,7 @@ def calls_list():
 @crm_bp.route("/calls/new", methods=["GET", "POST"])
 @login_required
 def call_new():
+    project_id = _project_id()
     domain_id = request.args.get("domain_id") or request.form.get("domain_id")
     domain_row = None
     search_results = []
@@ -964,6 +1067,7 @@ def call_new():
                         "notes": notes,
                         "next_follow_up_at": next_follow_up,
                     },
+                    project_id=project_id,
                 )
                 conn.commit()
             flash("تماس ثبت شد.", "ok")
@@ -999,10 +1103,117 @@ def call_new():
 @crm_bp.route("/calls/<int:call_id>")
 @login_required
 def call_detail(call_id: int):
+    project_id = _project_id()
     with mysql_connection(_config().mysql) as conn:
-        row = get_call_log(conn, call_id)
+        row = get_call_log(conn, call_id, project_id=project_id)
     if not row:
         abort(404)
     return render_template(
         "crm/call_detail.html", row=row, outcomes=CALL_OUTCOMES
     )
+
+
+_MEMBER_ROLE_LABELS = {
+    PROJECT_OWNER: "مالک",
+    PROJECT_ADMIN: "مدیر",
+    PROJECT_MEMBER: "عضو",
+}
+
+
+@crm_bp.route("/members")
+@login_required
+@project_admin_required
+def members_list():
+    project_id = _project_id()
+    with mysql_connection(_config().mysql) as conn:
+        rows = list_project_members(conn, project_id)
+    return render_template(
+        "crm/members.html",
+        rows=rows,
+        role_labels=_MEMBER_ROLE_LABELS,
+    )
+
+
+@crm_bp.route("/members/add", methods=["GET", "POST"])
+@login_required
+@project_admin_required
+def members_add():
+    project_id = _project_id()
+    if request.method == "POST":
+        mode = request.form.get("mode", "existing")
+        role = request.form.get("role", PROJECT_ADMIN)
+        if role not in PROJECT_ROLES:
+            role = PROJECT_ADMIN
+        try:
+            with mysql_connection(_config().mysql) as conn:
+                if mode == "new":
+                    username = (request.form.get("username") or "").strip()
+                    password = request.form.get("password", "")
+                    display_name = (request.form.get("display_name") or "").strip()
+                    if not username or not password:
+                        raise ValueError("نام کاربری و رمز عبور الزامی است")
+                    if len(password) < 6:
+                        raise ValueError("رمز عبور باید حداقل ۶ کاراکتر باشد")
+                    if find_admin_by_username(conn, username):
+                        raise ValueError("این نام کاربری قبلاً ثبت شده است")
+                    user_id = create_admin(
+                        conn,
+                        username=username,
+                        password=password,
+                        display_name=display_name or username,
+                        role=ROLE_ADMIN,
+                    )
+                else:
+                    username = (request.form.get("username") or "").strip()
+                    existing = find_admin_by_username(conn, username)
+                    if not existing or not existing.get("is_active"):
+                        raise ValueError("کاربری با این نام کاربری یافت نشد")
+                    user_id = int(existing["id"])
+                add_project_member(
+                    conn, project_id=project_id, user_id=user_id, role=role
+                )
+                conn.commit()
+            flash("عضو به پروژه اضافه شد.", "ok")
+            return redirect(url_for("crm.members_list"))
+        except ValueError as exc:
+            flash(str(exc), "error")
+    return render_template(
+        "crm/member_form.html",
+        roles=PROJECT_ROLES,
+        role_labels=_MEMBER_ROLE_LABELS,
+    )
+
+
+@crm_bp.route("/members/<int:user_id>/role", methods=["POST"])
+@login_required
+@project_admin_required
+def members_role(user_id: int):
+    project_id = _project_id()
+    role = request.form.get("role", PROJECT_ADMIN)
+    try:
+        with mysql_connection(_config().mysql) as conn:
+            update_project_member_role(
+                conn, project_id=project_id, user_id=user_id, role=role
+            )
+            conn.commit()
+        flash("نقش عضو به‌روز شد.", "ok")
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("crm.members_list"))
+
+
+@crm_bp.route("/members/<int:user_id>/remove", methods=["POST"])
+@login_required
+@project_admin_required
+def members_remove(user_id: int):
+    project_id = _project_id()
+    try:
+        with mysql_connection(_config().mysql) as conn:
+            remove_project_member(
+                conn, project_id=project_id, user_id=user_id
+            )
+            conn.commit()
+        flash("عضو از پروژه حذف شد.", "ok")
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("crm.members_list"))

@@ -20,12 +20,27 @@ from flask import (
 
 import bot_queries as q
 from cache_utils import cached
-from crm_db import ROLE_SUPER, authenticate_admin, ensure_crm_tables, CALL_OUTCOMES
+from crm_db import (
+    ROLE_SUPER,
+    authenticate_admin,
+    ensure_crm_tables,
+    CALL_OUTCOMES,
+    create_project,
+    list_user_projects,
+    register_user_with_project,
+)
 from jalali_utils import format_jdate, format_jdatetime, is_jalali_date
 from crm_panel import crm_bp
 from db import ensure_domain_detail_columns, ensure_domain_indexes, load_config, mysql_connection
 from log_viewer import LEVELS, clear_logs, list_log_files, read_log_entries
 from logging_setup import LOG_DIR, setup_logging
+from project_access import (
+    activate_user_project,
+    can_manage_project,
+    current_project_id,
+    is_platform_super,
+    set_admin_session,
+)
 
 setup_logging()
 
@@ -61,6 +76,14 @@ def login_required(view):
     def wrapper(*args, **kwargs):
         if not session.get("admin_id"):
             return redirect(url_for("login", next=request.path))
+        if not session.get("project_id"):
+            try:
+                with mysql_connection(app_config().mysql) as conn:
+                    activate_user_project(conn, int(session["admin_id"]))
+            except Exception:  # noqa: BLE001
+                pass
+            if not session.get("project_id"):
+                return redirect(url_for("projects_home"))
         return view(*args, **kwargs)
 
     return wrapper
@@ -89,15 +112,23 @@ def _bootstrap_crm():
 @app.context_processor
 def inject_globals():
     admin = None
+    project = None
     if session.get("admin_id"):
         admin = {
             "id": session.get("admin_id"),
             "username": session.get("admin_username"),
             "display_name": session.get("admin_display_name"),
             "role": session.get("admin_role"),
-            "is_super": session.get("admin_role") == ROLE_SUPER,
+            "is_super": is_platform_super(),
+            "can_manage_project": can_manage_project(),
         }
-    return {"current_admin": admin}
+        if session.get("project_id"):
+            project = {
+                "id": session.get("project_id"),
+                "name": session.get("project_name"),
+                "role": session.get("project_role"),
+            }
+    return {"current_admin": admin, "current_project": project}
 
 
 @app.template_filter("group")
@@ -176,15 +207,6 @@ def crm_redirect():
     return redirect(url_for("crm.dashboard"))
 
 
-def _set_admin_session(admin: dict) -> None:
-    session["admin_id"] = admin["id"]
-    session["admin_username"] = admin["username"]
-    session["admin_display_name"] = admin.get("display_name") or admin["username"]
-    session["admin_role"] = admin["role"]
-    session["auth"] = True
-    session.permanent = True
-
-
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -195,8 +217,12 @@ def login():
             if username:
                 admin = authenticate_admin(conn, username, password)
                 if admin:
-                    _set_admin_session(admin)
+                    set_admin_session(admin)
+                    activate_user_project(conn, int(admin["id"]))
+                    conn.commit()
                     nxt = request.args.get("next") or url_for("dashboard")
+                    if not session.get("project_id"):
+                        nxt = url_for("projects_home")
                     return redirect(nxt)
 
             # Legacy: single password without username (migrates to admin user)
@@ -206,15 +232,90 @@ def login():
 
                 admins = list_admins(conn)
                 if admins:
-                    _set_admin_session(admins[0])
+                    set_admin_session(admins[0])
+                    activate_user_project(conn, int(admins[0]["id"]))
+                    conn.commit()
                 else:
                     session["auth"] = True
                     session.permanent = True
                 nxt = request.args.get("next") or url_for("dashboard")
+                if session.get("admin_id") and not session.get("project_id"):
+                    nxt = url_for("projects_home")
                 return redirect(nxt)
 
         flash("نام کاربری یا رمز عبور نادرست است.", "error")
     return render_template("login.html")
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if session.get("admin_id"):
+        return redirect(url_for("dashboard"))
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm_password", "")
+        display_name = (request.form.get("display_name") or "").strip()
+        project_name = (request.form.get("project_name") or "").strip()
+        if password != confirm:
+            flash("رمز عبور و تکرار آن یکسان نیستند.", "error")
+        else:
+            try:
+                with mysql_connection(app_config().mysql) as conn:
+                    ensure_crm_tables(conn)
+                    admin, project_id = register_user_with_project(
+                        conn,
+                        username=username,
+                        password=password,
+                        display_name=display_name or username,
+                        project_name=project_name,
+                    )
+                    conn.commit()
+                    set_admin_session(admin)
+                    activate_user_project(conn, int(admin["id"]), project_id)
+                flash("حساب و پروژه شما ساخته شد.", "ok")
+                return redirect(url_for("dashboard"))
+            except ValueError as exc:
+                flash(str(exc), "error")
+    return render_template("register.html")
+
+
+@app.route("/projects", methods=["GET", "POST"])
+def projects_home():
+    if not session.get("admin_id"):
+        return redirect(url_for("login", next=request.path))
+    admin_id = int(session["admin_id"])
+    with mysql_connection(app_config().mysql) as conn:
+        if request.method == "POST":
+            name = (request.form.get("name") or "").strip()
+            try:
+                project_id = create_project(conn, name=name, owner_id=admin_id)
+                conn.commit()
+                activate_user_project(conn, admin_id, project_id)
+                flash("پروژه جدید ساخته شد.", "ok")
+                return redirect(url_for("dashboard"))
+            except ValueError as exc:
+                flash(str(exc), "error")
+        projects = list_user_projects(conn, admin_id)
+    return render_template(
+        "projects.html",
+        projects=projects,
+        current_project_id=current_project_id(),
+    )
+
+
+@app.route("/projects/switch/<int:project_id>", methods=["POST"])
+def projects_switch(project_id: int):
+    if not session.get("admin_id"):
+        return redirect(url_for("login"))
+    with mysql_connection(app_config().mysql) as conn:
+        ok = activate_user_project(conn, int(session["admin_id"]), project_id)
+    if not ok:
+        flash("به این پروژه دسترسی ندارید.", "error")
+        return redirect(url_for("projects_home"))
+    flash("پروژه فعال تغییر کرد.", "ok")
+    nxt = request.args.get("next") or url_for("dashboard")
+    return redirect(nxt)
 
 
 @app.route("/logout")
@@ -245,6 +346,8 @@ def index():
 @app.route("/dashboard")
 @login_required
 def dashboard():
+    project_id = current_project_id()
+
     def produce():
         from crm_db import crm_stats
 
@@ -252,10 +355,10 @@ def dashboard():
             return {
                 "stats": q.get_stats(conn),
                 "users": q.get_bot_user_stats(conn),
-                "crm": crm_stats(conn),
+                "crm": crm_stats(conn, project_id=project_id),
             }
 
-    data = cached("web_dashboard", STATS_CACHE_TTL, produce)
+    data = cached(f"web_dashboard:{project_id}", STATS_CACHE_TTL, produce)
     return render_template("dashboard.html", **data)
 
 
@@ -366,6 +469,7 @@ def domains():
 def domain_detail(domain_id: int):
     from crm_db import get_call_logs_for_domain, get_latest_call_for_domain
 
+    project_id = current_project_id()
     with mysql_connection(app_config().mysql) as conn:
         row = q.get_domain_by_id(conn, domain_id)
         if not row:
@@ -373,8 +477,12 @@ def domain_detail(domain_id: int):
         services = q.get_domain_services(
             conn, row.get("enamad_id"), row.get("code")
         )
-        latest_call = get_latest_call_for_domain(conn, domain_id)
-        call_history = get_call_logs_for_domain(conn, domain_id, limit=15)
+        latest_call = get_latest_call_for_domain(
+            conn, domain_id, project_id=project_id
+        )
+        call_history = get_call_logs_for_domain(
+            conn, domain_id, project_id=project_id, limit=15
+        )
     return render_template(
         "domain_detail.html",
         d=row,

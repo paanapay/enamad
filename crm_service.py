@@ -34,6 +34,7 @@ def send_sms_to_domain(
     *,
     domain_row: dict,
     template: dict,
+    project_id: int,
     settings: dict[str, str] | None = None,
     mobile_only: bool = True,
     campaign_id: int | None = None,
@@ -41,12 +42,13 @@ def send_sms_to_domain(
     force_send: bool = False,
     override_recipient: str | None = None,
 ) -> dict[str, Any]:
-    settings = settings or get_all_settings(conn)
+    settings = settings or get_all_settings(conn, project_id=project_id)
     context = build_template_context(domain_row)
     phone_type = context.get("phone_type")
     mobile = (override_recipient or "").strip() or context.get("mobile_phone")
 
     base_log = {
+        "project_id": project_id,
         "campaign_id": campaign_id,
         "automation_rule_id": automation_rule_id,
         "domain_id": domain_row.get("id"),
@@ -159,13 +161,14 @@ def send_email_to_domain(
     *,
     domain_row: dict,
     template: dict,
+    project_id: int,
     settings: dict[str, str] | None = None,
     campaign_id: int | None = None,
     automation_rule_id: int | None = None,
     force_send: bool = False,
     override_recipient: str | None = None,
 ) -> dict[str, Any]:
-    settings = settings or get_all_settings(conn)
+    settings = settings or get_all_settings(conn, project_id=project_id)
     context = build_template_context(domain_row)
     email = (
         (override_recipient or "").strip()
@@ -174,6 +177,7 @@ def send_email_to_domain(
     )
 
     base_log = {
+        "project_id": project_id,
         "campaign_id": campaign_id,
         "automation_rule_id": automation_rule_id,
         "domain_id": domain_row.get("id"),
@@ -251,6 +255,7 @@ def send_to_domain(
     domain_row: dict,
     template: dict,
     channel: str,
+    project_id: int,
     mobile_only: bool = True,
     campaign_id: int | None = None,
     automation_rule_id: int | None = None,
@@ -263,6 +268,7 @@ def send_to_domain(
             conn,
             domain_row=domain_row,
             template=template,
+            project_id=project_id,
             settings=settings,
             mobile_only=mobile_only,
             campaign_id=campaign_id,
@@ -275,6 +281,7 @@ def send_to_domain(
             conn,
             domain_row=domain_row,
             template=template,
+            project_id=project_id,
             settings=settings,
             campaign_id=campaign_id,
             automation_rule_id=automation_rule_id,
@@ -292,13 +299,14 @@ def run_campaign(conn, campaign_id: int) -> dict[str, int]:
     if not campaign:
         raise ValueError("کمپین یافت نشد")
 
-    template = get_template(conn, campaign["template_id"])
+    project_id = int(campaign["project_id"])
+    template = get_template(conn, campaign["template_id"], project_id=project_id)
     if not template or not template.get("is_active"):
         raise ValueError("قالب فعال یافت نشد")
 
     domain_ids = campaign.get("target_domain_ids") or []
     domains = get_domains_by_ids(conn, domain_ids)
-    settings = get_all_settings(conn)
+    settings = get_all_settings(conn, project_id=project_id)
     mobile_only = bool(campaign.get("mobile_only", 1))
 
     update_campaign_counts(conn, campaign_id, status="running", started=True)
@@ -311,6 +319,7 @@ def run_campaign(conn, campaign_id: int) -> dict[str, int]:
             domain_row=domain_row,
             template=template,
             channel=campaign["channel"],
+            project_id=project_id,
             mobile_only=mobile_only,
             campaign_id=campaign_id,
             settings=settings,
@@ -394,6 +403,8 @@ def process_new_domains(conn, domain_ids: list[int]) -> None:
 
     Old catalogue domains (created before the rule) are never messaged, even
     when a later trustseal refresh fills their phone/email.
+
+    Each rule uses its own project settings and logs so tenants stay isolated.
     """
     if not domain_ids:
         return
@@ -403,19 +414,25 @@ def process_new_domains(conn, domain_ids: list[int]) -> None:
         return
 
     domains = get_domains_by_ids(conn, domain_ids)
-    settings = get_all_settings(conn)
+    settings_by_project: dict[int, dict[str, str]] = {}
 
     for domain_row in domains:
         domain_created = domain_row.get("created_at")
         context = build_template_context(domain_row)
         for rule in rules:
             rule_id = int(rule["id"])
+            project_id = int(rule["project_id"])
             rule_created = rule.get("created_at")
             # Only domains that appeared after this rule was created.
             if domain_created and rule_created and domain_created < rule_created:
                 continue
 
-            if automation_already_handled(conn, int(domain_row["id"]), rule_id=rule_id):
+            if automation_already_handled(
+                conn,
+                int(domain_row["id"]),
+                project_id=project_id,
+                rule_id=rule_id,
+            ):
                 continue
 
             channel = rule["channel"]
@@ -428,6 +445,12 @@ def process_new_domains(conn, domain_ids: list[int]) -> None:
                 context.get("email_normalized") or domain_row.get("email")
             ):
                 continue
+
+            if project_id not in settings_by_project:
+                settings_by_project[project_id] = get_all_settings(
+                    conn, project_id=project_id
+                )
+            settings = settings_by_project[project_id]
 
             template = {
                 "id": rule["template_id"],
@@ -443,6 +466,7 @@ def process_new_domains(conn, domain_ids: list[int]) -> None:
                     domain_row=domain_row,
                     template=template,
                     channel=channel,
+                    project_id=project_id,
                     mobile_only=bool(rule.get("mobile_only", 1)),
                     automation_rule_id=rule_id,
                     settings=settings,
@@ -456,6 +480,7 @@ def process_new_domains(conn, domain_ids: list[int]) -> None:
                 insert_message_log(
                     conn,
                     {
+                        "project_id": project_id,
                         "automation_rule_id": rule_id,
                         "domain_id": domain_row.get("id"),
                         "channel": channel,

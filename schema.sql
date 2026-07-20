@@ -119,15 +119,51 @@ CREATE TABLE IF NOT EXISTS admin_users (
   UNIQUE KEY uk_admin_username (username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS projects (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  name VARCHAR(128) NOT NULL,
+  slug VARCHAR(64) NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_by BIGINT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_projects_slug (slug),
+  KEY idx_projects_active (is_active),
+  CONSTRAINT fk_projects_creator
+    FOREIGN KEY (created_by) REFERENCES admin_users (id)
+    ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS project_members (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  project_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  role VARCHAR(32) NOT NULL DEFAULT 'admin',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_project_member (project_id, user_id),
+  KEY idx_members_user (user_id),
+  CONSTRAINT fk_members_project
+    FOREIGN KEY (project_id) REFERENCES projects (id)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_members_user
+    FOREIGN KEY (user_id) REFERENCES admin_users (id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS crm_settings (
+  project_id BIGINT UNSIGNED NOT NULL,
   setting_key VARCHAR(64) NOT NULL,
   setting_value TEXT NULL,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (setting_key)
+  PRIMARY KEY (project_id, setting_key),
+  KEY idx_crm_settings_project (project_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS message_templates (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  project_id BIGINT UNSIGNED NOT NULL,
   name VARCHAR(128) NOT NULL,
   channel VARCHAR(16) NOT NULL,
   provider VARCHAR(32) NOT NULL DEFAULT 'kavenegar',
@@ -142,11 +178,13 @@ CREATE TABLE IF NOT EXISTS message_templates (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_templates_channel (channel),
-  KEY idx_templates_active (is_active)
+  KEY idx_templates_active (is_active),
+  KEY idx_templates_project (project_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS automation_rules (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  project_id BIGINT UNSIGNED NOT NULL,
   name VARCHAR(128) NOT NULL,
   trigger_type VARCHAR(32) NOT NULL DEFAULT 'new_domain',
   template_id BIGINT UNSIGNED NOT NULL,
@@ -157,6 +195,7 @@ CREATE TABLE IF NOT EXISTS automation_rules (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_rules_active (is_active),
+  KEY idx_rules_project (project_id),
   CONSTRAINT fk_rules_template
     FOREIGN KEY (template_id) REFERENCES message_templates (id)
     ON DELETE RESTRICT
@@ -164,6 +203,7 @@ CREATE TABLE IF NOT EXISTS automation_rules (
 
 CREATE TABLE IF NOT EXISTS message_campaigns (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  project_id BIGINT UNSIGNED NOT NULL,
   name VARCHAR(128) NOT NULL,
   channel VARCHAR(16) NOT NULL,
   template_id BIGINT UNSIGNED NOT NULL,
@@ -181,6 +221,7 @@ CREATE TABLE IF NOT EXISTS message_campaigns (
   finished_at TIMESTAMP NULL DEFAULT NULL,
   PRIMARY KEY (id),
   KEY idx_campaigns_status (status),
+  KEY idx_campaigns_project (project_id),
   CONSTRAINT fk_campaigns_template
     FOREIGN KEY (template_id) REFERENCES message_templates (id)
     ON DELETE RESTRICT,
@@ -191,6 +232,7 @@ CREATE TABLE IF NOT EXISTS message_campaigns (
 
 CREATE TABLE IF NOT EXISTS message_logs (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  project_id BIGINT UNSIGNED NULL,
   campaign_id BIGINT UNSIGNED NULL,
   automation_rule_id BIGINT UNSIGNED NULL,
   domain_id BIGINT UNSIGNED NULL,
@@ -208,6 +250,7 @@ CREATE TABLE IF NOT EXISTS message_logs (
   KEY idx_logs_domain (domain_id),
   KEY idx_logs_status (status),
   KEY idx_logs_created (created_at),
+  KEY idx_logs_project (project_id),
   CONSTRAINT fk_logs_campaign
     FOREIGN KEY (campaign_id) REFERENCES message_campaigns (id)
     ON DELETE SET NULL,
@@ -224,6 +267,7 @@ CREATE TABLE IF NOT EXISTS message_logs (
 
 CREATE TABLE IF NOT EXISTS crm_call_logs (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  project_id BIGINT UNSIGNED NOT NULL,
   domain_id BIGINT UNSIGNED NOT NULL,
   created_by BIGINT UNSIGNED NULL,
   phone_used VARCHAR(64) NULL,
@@ -237,6 +281,7 @@ CREATE TABLE IF NOT EXISTS crm_call_logs (
   KEY idx_calls_outcome (outcome),
   KEY idx_calls_follow_up (next_follow_up_at),
   KEY idx_calls_called_at (called_at),
+  KEY idx_calls_project (project_id),
   CONSTRAINT fk_calls_domain
     FOREIGN KEY (domain_id) REFERENCES enamad_domains (id)
     ON DELETE CASCADE,

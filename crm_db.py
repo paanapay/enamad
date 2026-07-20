@@ -21,6 +21,15 @@ from contact_utils import (
 ROLE_SUPER = "super_admin"
 ROLE_ADMIN = "admin"
 
+PROJECT_OWNER = "owner"
+PROJECT_ADMIN = "admin"
+PROJECT_MEMBER = "member"
+PROJECT_ROLES = (PROJECT_OWNER, PROJECT_ADMIN, PROJECT_MEMBER)
+PROJECT_ADMIN_ROLES = frozenset({PROJECT_OWNER, PROJECT_ADMIN})
+
+DEFAULT_PROJECT_SLUG = "default"
+DEFAULT_PROJECT_NAME = "پروژه اصلی"
+
 CRM_SETTINGS_KEYS = (
     "kavenegar_api_key",
     "smtp_host",
@@ -53,6 +62,42 @@ CALL_OUTCOMES = {
 CALL_OUTCOME_POSITIVE = frozenset({"interested", "callback", "converted"})
 
 
+def _column_exists(cursor, table: str, column: str) -> bool:
+    cursor.execute(
+        """
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = %s AND COLUMN_NAME = %s
+        LIMIT 1
+        """,
+        (table, column),
+    )
+    return cursor.fetchone() is not None
+
+
+def _index_exists(cursor, table: str, index_name: str) -> bool:
+    cursor.execute(
+        """
+        SELECT 1 FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = %s AND INDEX_NAME = %s
+        LIMIT 1
+        """,
+        (table, index_name),
+    )
+    return cursor.fetchone() is not None
+
+
+def _add_column_if_missing(cursor, table: str, column: str, ddl: str) -> None:
+    if not _column_exists(cursor, table, column):
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
+def _add_index_if_missing(cursor, table: str, index_name: str, ddl: str) -> None:
+    if not _index_exists(cursor, table, index_name):
+        cursor.execute(f"ALTER TABLE {table} ADD {ddl}")
+
+
 def ensure_crm_tables(conn) -> None:
     with conn.cursor() as cursor:
         cursor.execute(
@@ -71,6 +116,47 @@ def ensure_crm_tables(conn) -> None:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """
         )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS projects (
+              id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+              name VARCHAR(128) NOT NULL,
+              slug VARCHAR(64) NOT NULL,
+              is_active TINYINT(1) NOT NULL DEFAULT 1,
+              created_by BIGINT UNSIGNED NULL,
+              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                ON UPDATE CURRENT_TIMESTAMP,
+              PRIMARY KEY (id),
+              UNIQUE KEY uk_projects_slug (slug),
+              KEY idx_projects_active (is_active),
+              CONSTRAINT fk_projects_creator
+                FOREIGN KEY (created_by) REFERENCES admin_users (id)
+                ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS project_members (
+              id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+              project_id BIGINT UNSIGNED NOT NULL,
+              user_id BIGINT UNSIGNED NOT NULL,
+              role VARCHAR(32) NOT NULL DEFAULT 'admin',
+              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (id),
+              UNIQUE KEY uk_project_member (project_id, user_id),
+              KEY idx_members_user (user_id),
+              CONSTRAINT fk_members_project
+                FOREIGN KEY (project_id) REFERENCES projects (id)
+                ON DELETE CASCADE,
+              CONSTRAINT fk_members_user
+                FOREIGN KEY (user_id) REFERENCES admin_users (id)
+                ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """
+        )
+        # Legacy-compatible create (project_id added by migration below).
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS crm_settings (
@@ -238,7 +324,84 @@ def ensure_crm_tables(conn) -> None:
                 "AFTER token_mapping"
             )
 
+    _migrate_projects(conn)
     ensure_default_super_admin(conn)
+
+
+def _migrate_projects(conn) -> None:
+    """Add project_id columns and move legacy rows into the default project."""
+    with conn.cursor() as cursor:
+        default_id = _ensure_default_project_row(cursor)
+
+        # crm_settings: legacy PK(setting_key) → PK(project_id, setting_key)
+        if not _column_exists(cursor, "crm_settings", "project_id"):
+            cursor.execute(
+                "ALTER TABLE crm_settings ADD COLUMN project_id BIGINT UNSIGNED NULL"
+            )
+            cursor.execute(
+                "UPDATE crm_settings SET project_id = %s WHERE project_id IS NULL",
+                (default_id,),
+            )
+            cursor.execute("ALTER TABLE crm_settings DROP PRIMARY KEY")
+            cursor.execute(
+                "ALTER TABLE crm_settings MODIFY project_id BIGINT UNSIGNED NOT NULL"
+            )
+            cursor.execute(
+                "ALTER TABLE crm_settings ADD PRIMARY KEY (project_id, setting_key)"
+            )
+        else:
+            cursor.execute(
+                "UPDATE crm_settings SET project_id = %s WHERE project_id IS NULL",
+                (default_id,),
+            )
+
+        scoped_tables = (
+            ("message_templates", "idx_templates_project"),
+            ("automation_rules", "idx_rules_project"),
+            ("message_campaigns", "idx_campaigns_project"),
+            ("message_logs", "idx_logs_project"),
+            ("crm_call_logs", "idx_calls_project"),
+        )
+        for table, index_name in scoped_tables:
+            _add_column_if_missing(
+                cursor, table, "project_id", "BIGINT UNSIGNED NULL"
+            )
+            cursor.execute(
+                f"UPDATE {table} SET project_id = %s WHERE project_id IS NULL",
+                (default_id,),
+            )
+            _add_index_if_missing(
+                cursor, table, index_name, f"KEY {index_name} (project_id)"
+            )
+
+        # Attach existing admins to the default project (once).
+        cursor.execute(
+            """
+            INSERT IGNORE INTO project_members (project_id, user_id, role)
+            SELECT %s, a.id,
+              CASE WHEN a.role = %s THEN %s ELSE %s END
+            FROM admin_users a
+            """,
+            (default_id, ROLE_SUPER, PROJECT_OWNER, PROJECT_ADMIN),
+        )
+
+
+def _ensure_default_project_row(cursor) -> int:
+    cursor.execute(
+        "SELECT id FROM projects WHERE slug = %s LIMIT 1",
+        (DEFAULT_PROJECT_SLUG,),
+    )
+    row = cursor.fetchone()
+    if row:
+        return int(row["id"])
+    cursor.execute(
+        """
+        INSERT INTO projects (name, slug, is_active)
+        VALUES (%s, %s, 1)
+        """,
+        (DEFAULT_PROJECT_NAME, DEFAULT_PROJECT_SLUG),
+    )
+    return int(cursor.lastrowid)
 
 
 def backfill_contact_fields(conn, *, limit: int = 2000) -> int:
@@ -292,6 +455,257 @@ def ensure_default_super_admin(conn) -> None:
             """,
             ("admin", generate_password_hash(password), "مدیر اصلی", ROLE_SUPER),
         )
+        admin_id = int(cursor.lastrowid)
+        project_id = _ensure_default_project_row(cursor)
+        cursor.execute(
+            """
+            INSERT IGNORE INTO project_members (project_id, user_id, role)
+            VALUES (%s, %s, %s)
+            """,
+            (project_id, admin_id, PROJECT_OWNER),
+        )
+
+
+def _slugify_project_name(name: str) -> str:
+    raw = re.sub(r"[^\w\-]+", "-", (name or "").strip().lower(), flags=re.UNICODE)
+    raw = re.sub(r"-+", "-", raw).strip("-")
+    if not raw or not re.search(r"[a-z0-9]", raw):
+        raw = "project"
+    return raw[:48]
+
+
+def _unique_project_slug(cursor, base: str) -> str:
+    slug = base[:48] or "project"
+    candidate = slug
+    for _ in range(12):
+        cursor.execute(
+            "SELECT 1 FROM projects WHERE slug = %s LIMIT 1", (candidate,)
+        )
+        if not cursor.fetchone():
+            return candidate
+        candidate = f"{slug[:40]}-{secrets.token_hex(2)}"
+    return f"project-{secrets.token_hex(4)}"
+
+
+def create_project(
+    conn,
+    *,
+    name: str,
+    owner_id: int,
+    slug: str | None = None,
+) -> int:
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("نام پروژه الزامی است")
+    with conn.cursor() as cursor:
+        base = _slugify_project_name(slug or name)
+        final_slug = _unique_project_slug(cursor, base)
+        cursor.execute(
+            """
+            INSERT INTO projects (name, slug, is_active, created_by)
+            VALUES (%s, %s, 1, %s)
+            """,
+            (name, final_slug, owner_id),
+        )
+        project_id = int(cursor.lastrowid)
+        cursor.execute(
+            """
+            INSERT INTO project_members (project_id, user_id, role)
+            VALUES (%s, %s, %s)
+            """,
+            (project_id, owner_id, PROJECT_OWNER),
+        )
+    return project_id
+
+
+def get_project(conn, project_id: int) -> dict | None:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "SELECT * FROM projects WHERE id = %s",
+            (project_id,),
+        )
+        return cursor.fetchone()
+
+
+def list_user_projects(conn, user_id: int) -> list[dict]:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT p.*, m.role AS member_role
+            FROM projects p
+            JOIN project_members m ON m.project_id = p.id
+            WHERE m.user_id = %s AND p.is_active = 1
+            ORDER BY p.id ASC
+            """,
+            (user_id,),
+        )
+        return list(cursor.fetchall())
+
+
+def get_membership(conn, project_id: int, user_id: int) -> dict | None:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT m.*, p.name AS project_name, p.slug AS project_slug, p.is_active
+            FROM project_members m
+            JOIN projects p ON p.id = m.project_id
+            WHERE m.project_id = %s AND m.user_id = %s
+            LIMIT 1
+            """,
+            (project_id, user_id),
+        )
+        return cursor.fetchone()
+
+
+def list_project_members(conn, project_id: int) -> list[dict]:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT m.id AS membership_id, m.role AS member_role, m.created_at AS joined_at,
+                   a.id, a.username, a.display_name, a.role AS platform_role,
+                   a.is_active, a.last_login
+            FROM project_members m
+            JOIN admin_users a ON a.id = m.user_id
+            WHERE m.project_id = %s
+            ORDER BY FIELD(m.role, 'owner', 'admin', 'member'), a.id ASC
+            """,
+            (project_id,),
+        )
+        return list(cursor.fetchall())
+
+
+def add_project_member(
+    conn,
+    *,
+    project_id: int,
+    user_id: int,
+    role: str = PROJECT_ADMIN,
+) -> None:
+    if role not in PROJECT_ROLES:
+        role = PROJECT_ADMIN
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO project_members (project_id, user_id, role)
+            VALUES (%s, %s, %s)
+            ON DUPLICATE KEY UPDATE role = VALUES(role)
+            """,
+            (project_id, user_id, role),
+        )
+
+
+def update_project_member_role(
+    conn, *, project_id: int, user_id: int, role: str
+) -> None:
+    if role not in PROJECT_ROLES:
+        raise ValueError("نقش نامعتبر است")
+    with conn.cursor() as cursor:
+        if role != PROJECT_OWNER:
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS c FROM project_members
+                WHERE project_id = %s AND role = %s AND user_id != %s
+                """,
+                (project_id, PROJECT_OWNER, user_id),
+            )
+            owners_left = int((cursor.fetchone() or {}).get("c") or 0)
+            cursor.execute(
+                """
+                SELECT role FROM project_members
+                WHERE project_id = %s AND user_id = %s
+                """,
+                (project_id, user_id),
+            )
+            current = cursor.fetchone()
+            if (
+                current
+                and current.get("role") == PROJECT_OWNER
+                and owners_left < 1
+            ):
+                raise ValueError("حداقل یک مالک برای پروژه لازم است")
+        cursor.execute(
+            """
+            UPDATE project_members SET role = %s
+            WHERE project_id = %s AND user_id = %s
+            """,
+            (role, project_id, user_id),
+        )
+
+
+def remove_project_member(conn, *, project_id: int, user_id: int) -> None:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT role FROM project_members
+            WHERE project_id = %s AND user_id = %s
+            """,
+            (project_id, user_id),
+        )
+        current = cursor.fetchone()
+        if not current:
+            return
+        if current.get("role") == PROJECT_OWNER:
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS c FROM project_members
+                WHERE project_id = %s AND role = %s AND user_id != %s
+                """,
+                (project_id, PROJECT_OWNER, user_id),
+            )
+            if int((cursor.fetchone() or {}).get("c") or 0) < 1:
+                raise ValueError("حداقل یک مالک برای پروژه لازم است")
+        cursor.execute(
+            """
+            DELETE FROM project_members
+            WHERE project_id = %s AND user_id = %s
+            """,
+            (project_id, user_id),
+        )
+
+
+def find_admin_by_username(conn, username: str) -> dict | None:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT id, username, display_name, role, is_active
+            FROM admin_users WHERE username = %s LIMIT 1
+            """,
+            (username.strip(),),
+        )
+        return cursor.fetchone()
+
+
+def register_user_with_project(
+    conn,
+    *,
+    username: str,
+    password: str,
+    display_name: str | None,
+    project_name: str,
+) -> tuple[dict, int]:
+    """Create a new user + their first project. Returns (admin_row, project_id)."""
+    username = (username or "").strip()
+    project_name = (project_name or "").strip()
+    if not username or not password:
+        raise ValueError("نام کاربری و رمز عبور الزامی است")
+    if len(password) < 6:
+        raise ValueError("رمز عبور باید حداقل ۶ کاراکتر باشد")
+    if not project_name:
+        raise ValueError("نام پروژه الزامی است")
+    if find_admin_by_username(conn, username):
+        raise ValueError("این نام کاربری قبلاً ثبت شده است")
+    admin_id = create_admin(
+        conn,
+        username=username,
+        password=password,
+        display_name=display_name,
+        role=ROLE_ADMIN,
+    )
+    project_id = create_project(conn, name=project_name, owner_id=admin_id)
+    admin = get_admin_by_id(conn, admin_id)
+    if not admin:
+        raise RuntimeError("ساخت کاربر ناموفق بود")
+    return admin, project_id
 
 
 def enrich_contact_fields(row: dict) -> dict:
@@ -304,35 +718,44 @@ def enrich_contact_fields(row: dict) -> dict:
     return enriched
 
 
-def get_setting(conn, key: str) -> str:
+def get_setting(conn, key: str, *, project_id: int) -> str:
     with conn.cursor() as cursor:
         cursor.execute(
-            "SELECT setting_value FROM crm_settings WHERE setting_key = %s",
-            (key,),
+            """
+            SELECT setting_value FROM crm_settings
+            WHERE project_id = %s AND setting_key = %s
+            """,
+            (project_id, key),
         )
         row = cursor.fetchone()
     return str((row or {}).get("setting_value") or "")
 
 
-def get_all_settings(conn) -> dict[str, str]:
+def get_all_settings(conn, *, project_id: int) -> dict[str, str]:
     with conn.cursor() as cursor:
-        cursor.execute("SELECT setting_key, setting_value FROM crm_settings")
+        cursor.execute(
+            """
+            SELECT setting_key, setting_value FROM crm_settings
+            WHERE project_id = %s
+            """,
+            (project_id,),
+        )
         rows = cursor.fetchall()
     return {row["setting_key"]: row["setting_value"] or "" for row in rows}
 
 
-def save_settings(conn, settings: dict[str, str]) -> None:
+def save_settings(conn, settings: dict[str, str], *, project_id: int) -> None:
     with conn.cursor() as cursor:
         for key, value in settings.items():
             if key not in CRM_SETTINGS_KEYS:
                 continue
             cursor.execute(
                 """
-                INSERT INTO crm_settings (setting_key, setting_value)
-                VALUES (%s, %s)
+                INSERT INTO crm_settings (project_id, setting_key, setting_value)
+                VALUES (%s, %s, %s)
                 ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
                 """,
-                (key, value),
+                (project_id, key, value),
             )
 
 
@@ -473,11 +896,13 @@ def _parse_json_field(value) -> dict:
         return {}
 
 
-def list_templates(conn, *, channel: str | None = None) -> list[dict]:
-    sql = "SELECT * FROM message_templates"
-    params: list[Any] = []
+def list_templates(
+    conn, *, project_id: int, channel: str | None = None
+) -> list[dict]:
+    sql = "SELECT * FROM message_templates WHERE project_id = %s"
+    params: list[Any] = [project_id]
     if channel:
-        sql += " WHERE channel = %s"
+        sql += " AND channel = %s"
         params.append(channel)
     sql += " ORDER BY id DESC"
     with conn.cursor() as cursor:
@@ -488,16 +913,25 @@ def list_templates(conn, *, channel: str | None = None) -> list[dict]:
     return rows
 
 
-def get_template(conn, template_id: int) -> dict | None:
+def get_template(
+    conn, template_id: int, *, project_id: int | None = None
+) -> dict | None:
+    sql = "SELECT * FROM message_templates WHERE id = %s"
+    params: list[Any] = [template_id]
+    if project_id is not None:
+        sql += " AND project_id = %s"
+        params.append(project_id)
     with conn.cursor() as cursor:
-        cursor.execute("SELECT * FROM message_templates WHERE id = %s", (template_id,))
+        cursor.execute(sql, params)
         row = cursor.fetchone()
     if row:
         row["token_mapping"] = _parse_json_field(row.get("token_mapping"))
     return row
 
 
-def save_template(conn, data: dict, *, template_id: int | None = None) -> int:
+def save_template(
+    conn, data: dict, *, project_id: int, template_id: int | None = None
+) -> int:
     token_mapping = json.dumps(data.get("token_mapping") or {}, ensure_ascii=False)
     payload = (
         data["name"],
@@ -519,52 +953,69 @@ def save_template(conn, data: dict, *, template_id: int | None = None) -> int:
                   name=%s, channel=%s, provider=%s, description=%s,
                   kavenegar_template=%s, token_mapping=%s, sms_preview_text=%s,
                   email_subject=%s, email_body=%s, is_active=%s
-                WHERE id=%s
+                WHERE id=%s AND project_id=%s
                 """,
-                (*payload, template_id),
+                (*payload, template_id, project_id),
             )
             return template_id
         cursor.execute(
             """
             INSERT INTO message_templates (
-              name, channel, provider, description, kavenegar_template,
+              project_id, name, channel, provider, description, kavenegar_template,
               token_mapping, sms_preview_text, email_subject, email_body, is_active
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
-            payload,
+            (project_id, *payload),
         )
         return int(cursor.lastrowid)
 
 
-def delete_template(conn, template_id: int) -> None:
+def delete_template(conn, template_id: int, *, project_id: int) -> None:
     with conn.cursor() as cursor:
-        cursor.execute("DELETE FROM message_templates WHERE id = %s", (template_id,))
+        cursor.execute(
+            "DELETE FROM message_templates WHERE id = %s AND project_id = %s",
+            (template_id, project_id),
+        )
 
 
-def list_automation_rules(conn) -> list[dict]:
+def list_automation_rules(conn, *, project_id: int) -> list[dict]:
     with conn.cursor() as cursor:
         cursor.execute(
             """
             SELECT r.*, t.name AS template_name
             FROM automation_rules r
             JOIN message_templates t ON t.id = r.template_id
+            WHERE r.project_id = %s
             ORDER BY r.id DESC
-            """
+            """,
+            (project_id,),
         )
         return list(cursor.fetchall())
 
 
-def get_automation_rule(conn, rule_id: int) -> dict | None:
+def get_automation_rule(
+    conn, rule_id: int, *, project_id: int | None = None
+) -> dict | None:
+    sql = "SELECT * FROM automation_rules WHERE id = %s"
+    params: list[Any] = [rule_id]
+    if project_id is not None:
+        sql += " AND project_id = %s"
+        params.append(project_id)
     with conn.cursor() as cursor:
-        cursor.execute("SELECT * FROM automation_rules WHERE id = %s", (rule_id,))
+        cursor.execute(sql, params)
         return cursor.fetchone()
 
 
-def save_automation_rule(conn, data: dict, *, rule_id: int | None = None) -> int:
+def save_automation_rule(
+    conn, data: dict, *, project_id: int, rule_id: int | None = None
+) -> int:
+    template_id = int(data["template_id"])
+    if not get_template(conn, template_id, project_id=project_id):
+        raise ValueError("قالب انتخاب‌شده متعلق به این پروژه نیست")
     payload = (
         data["name"],
         data.get("trigger_type") or "new_domain",
-        int(data["template_id"]),
+        template_id,
         data["channel"],
         1 if data.get("mobile_only", True) else 0,
         1 if data.get("is_active", True) else 0,
@@ -576,28 +1027,32 @@ def save_automation_rule(conn, data: dict, *, rule_id: int | None = None) -> int
                 UPDATE automation_rules SET
                   name=%s, trigger_type=%s, template_id=%s, channel=%s,
                   mobile_only=%s, is_active=%s
-                WHERE id=%s
+                WHERE id=%s AND project_id=%s
                 """,
-                (*payload, rule_id),
+                (*payload, rule_id, project_id),
             )
             return rule_id
         cursor.execute(
             """
             INSERT INTO automation_rules (
-              name, trigger_type, template_id, channel, mobile_only, is_active
-            ) VALUES (%s,%s,%s,%s,%s,%s)
+              project_id, name, trigger_type, template_id, channel,
+              mobile_only, is_active
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s)
             """,
-            payload,
+            (project_id, *payload),
         )
         return int(cursor.lastrowid)
 
 
-def delete_automation_rule(conn, rule_id: int) -> None:
+def delete_automation_rule(conn, rule_id: int, *, project_id: int) -> None:
     with conn.cursor() as cursor:
-        cursor.execute("DELETE FROM automation_rules WHERE id = %s", (rule_id,))
+        cursor.execute(
+            "DELETE FROM automation_rules WHERE id = %s AND project_id = %s",
+            (rule_id, project_id),
+        )
 
 
-def list_campaigns(conn, *, limit: int = 50) -> list[dict]:
+def list_campaigns(conn, *, project_id: int, limit: int = 50) -> list[dict]:
     with conn.cursor() as cursor:
         cursor.execute(
             """
@@ -605,25 +1060,30 @@ def list_campaigns(conn, *, limit: int = 50) -> list[dict]:
             FROM message_campaigns c
             JOIN message_templates t ON t.id = c.template_id
             LEFT JOIN admin_users a ON a.id = c.created_by
+            WHERE c.project_id = %s
             ORDER BY c.id DESC
             LIMIT %s
             """,
-            (limit,),
+            (project_id, limit),
         )
         return list(cursor.fetchall())
 
 
-def get_campaign(conn, campaign_id: int) -> dict | None:
+def get_campaign(
+    conn, campaign_id: int, *, project_id: int | None = None
+) -> dict | None:
+    sql = """
+        SELECT c.*, t.name AS template_name
+        FROM message_campaigns c
+        JOIN message_templates t ON t.id = c.template_id
+        WHERE c.id = %s
+    """
+    params: list[Any] = [campaign_id]
+    if project_id is not None:
+        sql += " AND c.project_id = %s"
+        params.append(project_id)
     with conn.cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT c.*, t.name AS template_name
-            FROM message_campaigns c
-            JOIN message_templates t ON t.id = c.template_id
-            WHERE c.id = %s
-            """,
-            (campaign_id,),
-        )
+        cursor.execute(sql, params)
         row = cursor.fetchone()
     if row:
         row["target_domain_ids"] = _parse_json_field(row.get("target_domain_ids"))
@@ -636,20 +1096,24 @@ def get_campaign(conn, campaign_id: int) -> dict | None:
     return row
 
 
-def create_campaign(conn, data: dict) -> int:
+def create_campaign(conn, data: dict, *, project_id: int) -> int:
     domain_ids = data.get("target_domain_ids") or []
+    template_id = int(data["template_id"])
+    if not get_template(conn, template_id, project_id=project_id):
+        raise ValueError("قالب انتخاب‌شده متعلق به این پروژه نیست")
     with conn.cursor() as cursor:
         cursor.execute(
             """
             INSERT INTO message_campaigns (
-              name, channel, template_id, status, target_type,
+              project_id, name, channel, template_id, status, target_type,
               target_domain_ids, mobile_only, created_by, total_count
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             (
+                project_id,
                 data["name"],
                 data["channel"],
-                int(data["template_id"]),
+                template_id,
                 data.get("status") or "draft",
                 data.get("target_type") or "manual",
                 json.dumps(domain_ids),
@@ -698,12 +1162,13 @@ def insert_message_log(conn, data: dict) -> int:
         cursor.execute(
             """
             INSERT INTO message_logs (
-              campaign_id, automation_rule_id, domain_id, channel,
+              project_id, campaign_id, automation_rule_id, domain_id, channel,
               recipient, recipient_type, status, provider_message_id,
               error_message, template_id, sent_at
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             (
+                data.get("project_id"),
                 data.get("campaign_id"),
                 data.get("automation_rule_id"),
                 data.get("domain_id"),
@@ -722,6 +1187,7 @@ def insert_message_log(conn, data: dict) -> int:
 
 def _message_log_filters(
     *,
+    project_id: int,
     campaign_id: int | None = None,
     channel: str = "",
     status: str = "",
@@ -729,8 +1195,8 @@ def _message_log_filters(
     date_to: str = "",
     search: str = "",
 ) -> tuple[str, list[Any]]:
-    clauses: list[str] = []
-    params: list[Any] = []
+    clauses: list[str] = ["l.project_id = %s"]
+    params: list[Any] = [project_id]
     if campaign_id:
         clauses.append("l.campaign_id = %s")
         params.append(campaign_id)
@@ -752,13 +1218,14 @@ def _message_log_filters(
             "(d.domain LIKE %s OR d.business_name LIKE %s OR l.recipient LIKE %s)"
         )
         params.extend([pattern, pattern, pattern])
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    where = f"WHERE {' AND '.join(clauses)}"
     return where, params
 
 
 def list_message_logs(
     conn,
     *,
+    project_id: int,
     campaign_id: int | None = None,
     channel: str = "",
     status: str = "",
@@ -769,6 +1236,7 @@ def list_message_logs(
     offset: int = 0,
 ) -> list[dict]:
     where, params = _message_log_filters(
+        project_id=project_id,
         campaign_id=campaign_id,
         channel=channel,
         status=status,
@@ -796,6 +1264,7 @@ def list_message_logs(
 def count_message_logs(
     conn,
     *,
+    project_id: int,
     campaign_id: int | None = None,
     channel: str = "",
     status: str = "",
@@ -804,6 +1273,7 @@ def count_message_logs(
     search: str = "",
 ) -> int:
     where, params = _message_log_filters(
+        project_id=project_id,
         campaign_id=campaign_id,
         channel=channel,
         status=status,
@@ -825,6 +1295,7 @@ def count_message_logs(
 def message_log_stats(
     conn,
     *,
+    project_id: int,
     channel: str = "",
     status: str = "",
     date_from: str = "",
@@ -833,6 +1304,7 @@ def message_log_stats(
 ) -> dict[str, Any]:
     """Aggregate message-log counts grouped by channel and status."""
     where, params = _message_log_filters(
+        project_id=project_id,
         channel=channel,
         status=status,
         date_from=date_from,
@@ -867,6 +1339,7 @@ def message_log_stats(
 def iter_message_logs_for_export(
     conn,
     *,
+    project_id: int,
     channel: str = "",
     status: str = "",
     date_from: str = "",
@@ -879,6 +1352,7 @@ def iter_message_logs_for_export(
     while True:
         rows = list_message_logs(
             conn,
+            project_id=project_id,
             channel=channel,
             status=status,
             date_from=date_from,
@@ -895,22 +1369,27 @@ def iter_message_logs_for_export(
         offset += batch
 
 
-_DOMAIN_OUTREACH_FIELDS = """
+def _domain_outreach_select(project_id: int) -> tuple[str, list[Any]]:
+    sql = """
     d.id, d.domain, d.business_name, d.owner_name, d.phone, d.email,
     d.phone_type, d.mobile_phone, d.email_normalized,
     d.province, d.city, d.approve_date, d.expire_date, d.rating,
     EXISTS(
         SELECT 1 FROM message_logs ml
         WHERE ml.domain_id = d.id AND ml.channel = 'sms' AND ml.status = 'sent'
+          AND ml.project_id = %s
     ) AS sms_sent,
     EXISTS(
         SELECT 1 FROM message_logs ml
         WHERE ml.domain_id = d.id AND ml.channel = 'email' AND ml.status = 'sent'
+          AND ml.project_id = %s
     ) AS email_sent,
     EXISTS(
-        SELECT 1 FROM crm_call_logs cl WHERE cl.domain_id = d.id
+        SELECT 1 FROM crm_call_logs cl
+        WHERE cl.domain_id = d.id AND cl.project_id = %s
     ) AS has_call
-"""
+    """
+    return sql, [project_id, project_id, project_id]
 
 
 def _campaign_domain_filters(
@@ -936,12 +1415,14 @@ def _campaign_domain_filters(
 def list_domains_for_campaign(
     conn,
     *,
+    project_id: int,
     query: str = "",
     phone_type: str = "",
     offset: int = 0,
     limit: int = 50,
 ) -> list[dict]:
     where, params = _campaign_domain_filters(query, phone_type)
+    fields_sql, outreach_params = _domain_outreach_select(project_id)
     if query:
         order = """
             ORDER BY
@@ -955,14 +1436,16 @@ def list_domains_for_campaign(
         order = "ORDER BY d.source_page ASC, d.source_row ASC, d.id ASC"
         order_params = []
     sql = f"""
-        SELECT {_DOMAIN_OUTREACH_FIELDS}
+        SELECT {fields_sql}
         FROM enamad_domains d
         {where}
         {order}
         LIMIT %s OFFSET %s
     """
     with conn.cursor() as cursor:
-        cursor.execute(sql, [*params, *order_params, limit, offset])
+        cursor.execute(
+            sql, [*outreach_params, *params, *order_params, limit, offset]
+        )
         return list(cursor.fetchall())
 
 
@@ -1000,11 +1483,15 @@ def get_active_rules_for_trigger(conn, trigger_type: str) -> list[dict]:
     with conn.cursor() as cursor:
         cursor.execute(
             """
-            SELECT r.*, t.*
+            SELECT r.id, r.project_id, r.name, r.trigger_type, r.template_id,
+                   r.channel, r.mobile_only, r.is_active, r.created_at,
+                   t.kavenegar_template, t.token_mapping,
+                   t.email_subject, t.email_body, t.is_active AS template_active
             FROM automation_rules r
             JOIN message_templates t ON t.id = r.template_id
             WHERE r.is_active = 1 AND t.is_active = 1
               AND r.trigger_type = %s
+              AND r.project_id IS NOT NULL
             """,
             (trigger_type,),
         )
@@ -1015,7 +1502,11 @@ def get_active_rules_for_trigger(conn, trigger_type: str) -> list[dict]:
 
 
 def automation_already_handled(
-    conn, domain_id: int, *, rule_id: int | None = None
+    conn,
+    domain_id: int,
+    *,
+    project_id: int,
+    rule_id: int | None = None,
 ) -> bool:
     """True if this domain already got a final automation attempt (sent/test/failed
     or a non-retryable skip such as landline). Missing-contact skips are NOT final
@@ -1024,9 +1515,9 @@ def automation_already_handled(
     sql = """
         SELECT status, error_message
         FROM message_logs
-        WHERE domain_id = %s AND automation_rule_id IS NOT NULL
+        WHERE domain_id = %s AND project_id = %s AND automation_rule_id IS NOT NULL
     """
-    params: list[Any] = [domain_id]
+    params: list[Any] = [domain_id, project_id]
     if rule_id is not None:
         sql += " AND automation_rule_id = %s"
         params.append(rule_id)
@@ -1095,7 +1586,7 @@ def preview_template(template: dict, domain_row: dict) -> str:
     return "\n".join(parts)
 
 
-def create_call_log(conn, data: dict) -> int:
+def create_call_log(conn, data: dict, *, project_id: int) -> int:
     outcome = data.get("outcome") or "not_called"
     if outcome not in CALL_OUTCOMES:
         raise ValueError("نتیجه تماس نامعتبر است")
@@ -1105,11 +1596,12 @@ def create_call_log(conn, data: dict) -> int:
             cursor.execute(
                 """
                 INSERT INTO crm_call_logs (
-                  domain_id, created_by, phone_used, outcome, notes,
+                  project_id, domain_id, created_by, phone_used, outcome, notes,
                   called_at, next_follow_up_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
+                    project_id,
                     int(data["domain_id"]),
                     data.get("created_by"),
                     data.get("phone_used") or None,
@@ -1123,11 +1615,12 @@ def create_call_log(conn, data: dict) -> int:
             cursor.execute(
                 """
                 INSERT INTO crm_call_logs (
-                  domain_id, created_by, phone_used, outcome, notes,
+                  project_id, domain_id, created_by, phone_used, outcome, notes,
                   next_follow_up_at
-                ) VALUES (%s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
+                    project_id,
                     int(data["domain_id"]),
                     data.get("created_by"),
                     data.get("phone_used") or None,
@@ -1139,25 +1632,30 @@ def create_call_log(conn, data: dict) -> int:
         return int(cursor.lastrowid)
 
 
-def get_call_log(conn, call_id: int) -> dict | None:
+def get_call_log(
+    conn, call_id: int, *, project_id: int | None = None
+) -> dict | None:
+    sql = """
+        SELECT c.*, d.domain, d.business_name, d.owner_name,
+               a.username AS created_by_name, a.display_name AS created_by_display
+        FROM crm_call_logs c
+        JOIN enamad_domains d ON d.id = c.domain_id
+        LEFT JOIN admin_users a ON a.id = c.created_by
+        WHERE c.id = %s
+    """
+    params: list[Any] = [call_id]
+    if project_id is not None:
+        sql += " AND c.project_id = %s"
+        params.append(project_id)
     with conn.cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT c.*, d.domain, d.business_name, d.owner_name,
-                   a.username AS created_by_name, a.display_name AS created_by_display
-            FROM crm_call_logs c
-            JOIN enamad_domains d ON d.id = c.domain_id
-            LEFT JOIN admin_users a ON a.id = c.created_by
-            WHERE c.id = %s
-            """,
-            (call_id,),
-        )
+        cursor.execute(sql, params)
         return cursor.fetchone()
 
 
 def list_call_logs(
     conn,
     *,
+    project_id: int,
     filter_type: str = "all",
     outcome: str | None = None,
     domain_id: int | None = None,
@@ -1170,9 +1668,9 @@ def list_call_logs(
         FROM crm_call_logs c
         JOIN enamad_domains d ON d.id = c.domain_id
         LEFT JOIN admin_users a ON a.id = c.created_by
-        WHERE 1=1
+        WHERE c.project_id = %s
     """
-    params: list[Any] = []
+    params: list[Any] = [project_id]
 
     if domain_id:
         sql += " AND c.domain_id = %s"
@@ -1201,12 +1699,13 @@ def list_call_logs(
 def count_call_logs(
     conn,
     *,
+    project_id: int,
     filter_type: str = "all",
     outcome: str | None = None,
     domain_id: int | None = None,
 ) -> int:
-    sql = "SELECT COUNT(*) AS c FROM crm_call_logs c WHERE 1=1"
-    params: list[Any] = []
+    sql = "SELECT COUNT(*) AS c FROM crm_call_logs c WHERE c.project_id = %s"
+    params: list[Any] = [project_id]
 
     if domain_id:
         sql += " AND c.domain_id = %s"
@@ -1228,27 +1727,33 @@ def count_call_logs(
         return int((cursor.fetchone() or {}).get("c") or 0)
 
 
-def get_latest_call_for_domain(conn, domain_id: int) -> dict | None:
+def get_latest_call_for_domain(
+    conn, domain_id: int, *, project_id: int
+) -> dict | None:
     with conn.cursor() as cursor:
         cursor.execute(
             """
             SELECT c.*, a.username AS created_by_name, a.display_name AS created_by_display
             FROM crm_call_logs c
             LEFT JOIN admin_users a ON a.id = c.created_by
-            WHERE c.domain_id = %s
+            WHERE c.domain_id = %s AND c.project_id = %s
             ORDER BY c.called_at DESC, c.id DESC
             LIMIT 1
             """,
-            (domain_id,),
+            (domain_id, project_id),
         )
         return cursor.fetchone()
 
 
-def get_call_logs_for_domain(conn, domain_id: int, *, limit: int = 20) -> list[dict]:
-    return list_call_logs(conn, domain_id=domain_id, limit=limit, offset=0)
+def get_call_logs_for_domain(
+    conn, domain_id: int, *, project_id: int, limit: int = 20
+) -> list[dict]:
+    return list_call_logs(
+        conn, project_id=project_id, domain_id=domain_id, limit=limit, offset=0
+    )
 
 
-def call_stats(conn) -> dict[str, int]:
+def call_stats(conn, *, project_id: int) -> dict[str, int]:
     with conn.cursor() as cursor:
         cursor.execute(
             """
@@ -1262,7 +1767,9 @@ def call_stats(conn) -> dict[str, int]:
                 SUM(outcome IN ('interested', 'callback')) AS interested,
                 SUM(outcome = 'converted') AS converted
             FROM crm_call_logs
-            """
+            WHERE project_id = %s
+            """,
+            (project_id,),
         )
         row = cursor.fetchone() or {}
     return {
@@ -1273,24 +1780,28 @@ def call_stats(conn) -> dict[str, int]:
     }
 
 
-def crm_stats(conn) -> dict[str, int]:
+def crm_stats(conn, *, project_id: int) -> dict[str, int]:
     with conn.cursor() as cursor:
         cursor.execute(
             """
             SELECT
-                (SELECT COUNT(*) FROM message_templates WHERE is_active = 1) AS templates,
-                (SELECT COUNT(*) FROM automation_rules WHERE is_active = 1) AS rules,
-                (SELECT COUNT(*) FROM message_campaigns) AS campaigns,
+                (SELECT COUNT(*) FROM message_templates
+                 WHERE is_active = 1 AND project_id = %s) AS templates,
+                (SELECT COUNT(*) FROM automation_rules
+                 WHERE is_active = 1 AND project_id = %s) AS rules,
+                (SELECT COUNT(*) FROM message_campaigns
+                 WHERE project_id = %s) AS campaigns,
                 SUM(phone_type IN ('mobile', 'mixed')) AS mobile_domains,
                 SUM(phone_type = 'landline') AS landline_domains,
                 SUM(
                     email_normalized IS NOT NULL AND email_normalized != ''
                 ) AS email_domains
             FROM enamad_domains
-            """
+            """,
+            (project_id, project_id, project_id),
         )
         row = cursor.fetchone() or {}
-        calls = call_stats(conn)
+        calls = call_stats(conn, project_id=project_id)
     return {
         "templates": int(row.get("templates") or 0),
         "rules": int(row.get("rules") or 0),

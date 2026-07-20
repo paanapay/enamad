@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% set active = 'members' %}
+{% block title %}اعضای پروژه{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('crm.dashboard') }}">‹ بازگشت به CRM</a></p>
+<h1>اعضای پروژه{% if current_project %} — {{ current_project.name }}{% endif %}</h1>
+<p class="muted">چند نفر می‌توانند هم‌زمان روی CRM این پروژه کار کنند.</p>
+<a class="btn" href="{{ url_for('crm.members_add') }}">+ افزودن عضو</a>
+
+<div class="panel" style="padding:0;overflow:auto;margin-top:16px">
+  <table>
+    <thead><tr><th>نام کاربری</th><th>نام نمایشی</th><th>نقش در پروژه</th><th>آخرین ورود</th><th></th></tr></thead>
+    <tbody>
+      {% for a in rows %}
+      <tr>
+        <td class="mono">{{ a.username }}</td>
+        <td>{{ a.display_name or '—' }}</td>
+        <td>
+          <form method="post" action="{{ url_for('crm.members_role', user_id=a.id) }}" style="display:flex;gap:6px;align-items:center">
+            <select name="role">
+              {% for role in ['owner','admin','member'] %}
+              <option value="{{ role }}" {{ 'selected' if a.member_role==role else '' }}>{{ role_labels[role] }}</option>
+              {% endfor %}
+            </select>
+            <button class="btn" type="submit" style="padding:4px 10px">ذخیره</button>
+          </form>
+        </td>
+        <td class="mono">{{ a.last_login|jdatetime }}</td>
+        <td>
+          <form method="post" action="{{ url_for('crm.members_remove', user_id=a.id) }}"
+                onsubmit="return confirm('این عضو از پروژه حذف شود؟')">
+            <button type="submit" class="btn" style="background:#b91c1c">حذف</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">عضوی ثبت نشده.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

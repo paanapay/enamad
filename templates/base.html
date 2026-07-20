@@ -17,13 +17,21 @@
         <a href="{{ url_for('domains') }}" class="{{ 'active' if active=='domains' }}">دامنه‌ها</a>
         <a href="{{ url_for('crm.dashboard') }}" class="{{ 'active' if active=='crm' }}">CRM</a>
         <a href="{{ url_for('estelam') }}" class="{{ 'active' if active=='estelam' }}">استعلام زنده</a>
+        {% if current_admin.can_manage_project %}
+        <a href="{{ url_for('crm.members_list') }}" class="{{ 'active' if active=='members' }}">اعضای پروژه</a>
+        {% endif %}
         {% if current_admin.is_super %}
         <a href="{{ url_for('users') }}" class="{{ 'active' if active=='users' }}">کاربران ربات</a>
-        <a href="{{ url_for('crm.admins_list') }}" class="{{ 'active' if active=='admins' }}">مدیران</a>
+        <a href="{{ url_for('crm.admins_list') }}" class="{{ 'active' if active=='admins' }}">مدیران سیستم</a>
         <a href="{{ url_for('system_logs') }}" class="{{ 'active' if active=='system_logs' }}">لاگ سیستم</a>
         {% endif %}
       </nav>
       <span class="spacer"></span>
+      {% if current_project %}
+      <nav>
+        <a href="{{ url_for('projects_home') }}" title="تعویض پروژه">📁 {{ current_project.name }}</a>
+      </nav>
+      {% endif %}
       <nav><a href="{{ url_for('crm.change_password') }}" class="{{ 'active' if active=='account' }}" title="تغییر رمز عبور">{{ current_admin.display_name }}</a></nav>
       <nav><a href="{{ url_for('logout') }}" class="logout">خروج</a></nav>
     </div>
@@ -35,7 +43,7 @@
       🧪 حالت آزمایشی فعال است — هیچ پیامک یا ایمیل واقعی ارسال نمی‌شود؛ فقط در
       <a href="{{ url_for('crm.message_logs', status='test') }}">گزارش ارسال‌ها</a>
       ثبت می‌گردد.
-      {% if current_admin.is_super %}
+      {% if current_admin.can_manage_project %}
       <a href="{{ url_for('crm.settings') }}">تغییر تنظیمات</a>
       {% endif %}
     </div>
