@@ -28,7 +28,7 @@ services:
   # One-shot: create database schema, then exit.
   init:
     build: .
-    command: python extract_enamad.py --init-db
+    command: python src/enamad/scraper/extract_enamad.py --init-db
     restart: "no"
     environment: &app_env
       MYSQL_HOST: mysql
@@ -50,7 +50,7 @@ services:
 
   bot:
     build: .
-    command: python telegram_bot.py
+    command: python src/enamad/bots/telegram_bot.py
     restart: unless-stopped
     # Host network so TELEGRAM_PROXY=socks5://127.0.0.1:PORT reaches the
     # SOCKS proxy running on the server (not inside the container).
@@ -67,7 +67,7 @@ services:
 
   bale-bot:
     build: .
-    command: python bale_bot.py
+    command: python src/enamad/bots/bale_bot.py
     restart: unless-stopped
     network_mode: host
     environment:
@@ -90,7 +90,7 @@ services:
     # Admin web panel (Flask via gunicorn). Bound to localhost; the host's
     # nginx reverse-proxies enamad.<your-domain> -> 127.0.0.1:8095.
     command: >
-      gunicorn --bind 127.0.0.1:8095 --workers 2 --timeout 120 webapp:app
+      gunicorn --bind 127.0.0.1:8095 --workers 2 --timeout 120 enamad.web.webapp:app
     restart: unless-stopped
     network_mode: host
     environment:
@@ -112,7 +112,7 @@ services:
 
   scheduler:
     build: .
-    command: python scheduler.py
+    command: python src/enamad/scheduler/scheduler.py
     restart: unless-stopped
     environment:
       <<: *app_env

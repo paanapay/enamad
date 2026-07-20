@@ -139,6 +139,20 @@ Uses long polling — no public URL or webhook needed. Setup details in [DOCS.md
 
 ---
 
+## Architecture and tests
+
+- Modular package scaffold lives in `src/enamad/` (incremental migration path).
+- Legacy entrypoints still work (`webapp.py`, bots, scraper scripts).
+- Run tests with:
+
+```bash
+pytest -q
+```
+
+- Architecture notes and migration rules: [ARCHITECTURE.md](ARCHITECTURE.md)
+
+---
+
 ## Notes
 
 - Be respectful: avoid aggressive parallel load against enamad.ir.

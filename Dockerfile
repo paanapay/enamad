@@ -10,7 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    TZ=Asia/Tehran
+    TZ=Asia/Tehran \
+    PYTHONPATH=/app/src:/app
 
 WORKDIR /app
 
@@ -20,4 +21,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Default command runs the Telegram bot; compose overrides per-service.
-CMD ["python", "telegram_bot.py"]
+CMD ["python", "src/enamad/bots/telegram_bot.py"]
