@@ -15,22 +15,22 @@ from pathlib import Path
 LAYOUT_MARKER = "<!-- enamad-email-layout -->"
 
 _FONT_STACK = (
-    "vazirmatn, Vazir, iranyekanBakh, IRANSans, 'B Yekan', "
-    "Tahoma, Arial, sans-serif"
+    "Tahoma, Arial, 'Segoe UI', vazirmatn, Vazir, IRANSans, sans-serif"
 )
 _FONT_STACK_CSS = (
-    "vazirmatn, 'Vazir', 'iranyekanBakh', 'IRANSans', 'B Yekan', "
-    "Tahoma, Arial, sans-serif"
+    "Tahoma, Arial, 'Segoe UI', vazirmatn, 'Vazir', 'IRANSans', sans-serif"
 )
 
 _BLOCK = (
     f"direction:rtl;text-align:right;font-family:{_FONT_STACK};"
-    "font-size:16px;line-height:1.95;color:#1f2937;"
+    "font-size:16px;line-height:1.8;color:#1f2937;"
+    "letter-spacing:0;word-spacing:normal;"
 )
 _P_STYLE = f"margin:0 0 1em 0;{_BLOCK}"
 _LIST_STYLE = f"margin:0 0 1em 0;padding-right:1.5em;padding-left:0;{_BLOCK}"
 
 # Soft hyphen / odd Unicode spaces that CKEditor/Word sometimes insert.
+# Keep ZWNJ (U+200C) — needed for correct Persian (راه‌اندازی).
 _BAD_CHARS_RE = re.compile("[\u00ad\u200b\u200e\u200f\ufeff]")
 
 
@@ -62,6 +62,8 @@ body, table, td, a, p, li, div {{
   -webkit-text-size-adjust: 100%;
   -ms-text-size-adjust: 100%;
   font-family: {_FONT_STACK_CSS};
+  letter-spacing: 0;
+  word-spacing: normal;
 }}
 table, td {{
   mso-table-lspace: 0pt;
@@ -140,26 +142,35 @@ def _enhance_html_fragment(fragment: str) -> str:
 
 
 def _break_long_lines(html_text: str, limit: int = 800) -> str:
-    """Insert newlines so no MIME line exceeds SMTP-safe length."""
+    """Fold long lines without ever splitting inside a word/tag name.
+
+    A newline inside Persian text becomes a visible space in HTML
+    (سریع → سر یع). Only break after '>' or at existing whitespace.
+    If a token is longer than limit (rare), leave it — quoted-printable
+    will fold the MIME line safely.
+    """
     out: list[str] = []
     for line in html_text.splitlines() or [html_text]:
         while len(line.encode("utf-8")) > limit:
-            # Prefer breaking after a tag boundary.
             chunk = line
-            cut = None
-            # Walk back from a byte-safe char budget.
-            approx = min(len(chunk), limit)
+            # Budget by characters first, then walk back to a safe cut.
+            approx = min(len(chunk), max(40, limit // 2))
             window = chunk[:approx]
-            for sep in (">", " ", ";", ","):
+            cut = None
+            for sep in (">", " ", "\t"):
                 idx = window.rfind(sep)
-                if idx >= 40:
+                if idx >= 20:
                     cut = idx + 1
                     break
             if cut is None:
-                cut = max(40, approx // 2)
-            out.append(chunk[:cut])
-            line = chunk[cut:]
-        out.append(line)
+                # No safe point — stop folding this line.
+                break
+            out.append(chunk[:cut].rstrip(" \t"))
+            line = chunk[cut:].lstrip(" \t")
+            if not line:
+                break
+        if line:
+            out.append(line)
     return "\n".join(out)
 
 
