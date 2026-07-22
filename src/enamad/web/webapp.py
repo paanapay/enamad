@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import secrets
 from functools import wraps
+from pathlib import Path
 
 from flask import (
     Flask,
@@ -44,7 +45,15 @@ from project_access import (
 
 setup_logging()
 
-app = Flask(__name__)
+# Templates/static live at the repo root (`/app/templates`), not next to this
+# package module (`src/enamad/web/`). Without an explicit path, Flask looks
+# beside __name__ and fails with TemplateNotFound under gunicorn.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+app = Flask(
+    __name__,
+    template_folder=str(_REPO_ROOT / "templates"),
+    static_folder=str(_REPO_ROOT / "static"),
+)
 app.secret_key = os.environ.get("WEB_SECRET_KEY") or secrets.token_hex(32)
 app.register_blueprint(crm_bp)
 
