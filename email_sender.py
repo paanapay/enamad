@@ -63,14 +63,15 @@ def send_email(
         raise EmailSendError("تنظیمات SMTP کامل نیست")
 
     html_body = prepare_email_html(body)
-    # Prefer 8bit like marketing mailers so "Show original" stays readable HTML
-    # instead of a giant base64 blob (encoding is unrelated to fonts; Gmail
-    # decodes either way).
+    # quoted-printable keeps UTF-8 safe across SMTP relays and folds long lines
+    # (8bit mega-lines get split mid-word/tag by some MTAs → "س ریع", "< strong>").
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = config.from_addr
     msg["To"] = to_addr
-    msg.set_content(html_body, subtype="html", charset="utf-8", cte="8bit")
+    msg.set_content(
+        html_body, subtype="html", charset="utf-8", cte="quoted-printable"
+    )
 
     try:
         if config.use_tls:

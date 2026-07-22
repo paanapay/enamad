@@ -1,13 +1,9 @@
 """RTL HTML wrapper for CRM emails — Gmail-safe inline styles + table layout.
 
-Gmail (web/app) strips @font-face and never loads remote/custom fonts.
-What works in Gmail is only a system font stack: if Vazir/IRANSans is
-installed on the device it is used; otherwise Tahoma (good Persian glyphs).
+Gmail strips @font-face; we only declare a system font stack (Vazir/Tahoma).
 
-We therefore:
-  - never embed fonts as base64 (bloats the message; Gmail ignores it anyway)
-  - optionally keep a hosted @font-face URL for Apple Mail / iOS Mail
-  - put a Roocket-style font stack on body/td/p with !important
+Critical: keep MIME lines under ~900 bytes. Overlong lines get broken by
+SMTP relays and show up as mid-word spaces (س ریع) and broken tags (< strong>).
 """
 from __future__ import annotations
 
@@ -18,8 +14,6 @@ from pathlib import Path
 
 LAYOUT_MARKER = "<!-- enamad-email-layout -->"
 
-# Match Persian marketing emails that render well across clients.
-# Gmail will pick the first family that exists on the device, else Tahoma.
 _FONT_STACK = (
     "vazirmatn, Vazir, iranyekanBakh, IRANSans, 'B Yekan', "
     "Tahoma, Arial, sans-serif"
@@ -30,12 +24,14 @@ _FONT_STACK_CSS = (
 )
 
 _BLOCK = (
-    f"direction:rtl;text-align:right;"
-    f"font-family:{_FONT_STACK} !important;"
+    f"direction:rtl;text-align:right;font-family:{_FONT_STACK};"
     "font-size:16px;line-height:1.95;color:#1f2937;"
 )
 _P_STYLE = f"margin:0 0 1em 0;{_BLOCK}"
 _LIST_STYLE = f"margin:0 0 1em 0;padding-right:1.5em;padding-left:0;{_BLOCK}"
+
+# Soft hyphen / odd Unicode spaces that CKEditor/Word sometimes insert.
+_BAD_CHARS_RE = re.compile("[\u00ad\u200b\u200e\u200f\ufeff]")
 
 
 def _public_font_url() -> str:
@@ -46,7 +42,7 @@ def _public_font_url() -> str:
 
 
 def _head_styles() -> str:
-    """Client resets + optional hosted @font-face (Apple Mail only; not Gmail)."""
+    """Client resets + optional hosted @font-face (Apple Mail; not Gmail)."""
     url = _public_font_url()
     font_face = ""
     if url:
@@ -65,9 +61,7 @@ def _head_styles() -> str:
 body, table, td, a, p, li, div {{
   -webkit-text-size-adjust: 100%;
   -ms-text-size-adjust: 100%;
-}}
-body, table, td, a, p, li, div {{
-  font-family: {_FONT_STACK_CSS} !important;
+  font-family: {_FONT_STACK_CSS};
 }}
 table, td {{
   mso-table-lspace: 0pt;
@@ -82,7 +76,6 @@ def _looks_like_html(text: str) -> bool:
 
 def _merge_rtl_into_style(style: str) -> str:
     style = (style or "").strip().rstrip(";")
-    # Always force our email font stack (CKEditor / paste may set something else).
     style = re.sub(
         r"(?i)(?:^|;)\s*font-family\s*:[^;]*",
         "",
@@ -92,8 +85,13 @@ def _merge_rtl_into_style(style: str) -> str:
         style = f"{style};direction:rtl" if style else "direction:rtl"
     if "text-align" not in style:
         style = f"{style};text-align:right"
-    style = f"{style};font-family:{_FONT_STACK} !important"
+    style = f"{style};font-family:{_FONT_STACK}"
     return style
+
+
+def _open_tag_pattern(tag: str) -> str:
+    """Match <tag> or <tag ...> but never <tagX> (e.g. <a> ≠ <strong>/<abbr>)."""
+    return rf"<{tag}(\s[^>]*)?>"
 
 
 def _enhance_html_fragment(fragment: str) -> str:
@@ -109,20 +107,15 @@ def _enhance_html_fragment(fragment: str) -> str:
             attrs += f' style="{default_style}"'
         return f"<{tag}{attrs}>"
 
+    # Only structural tags — leave strong/b/em/br/img alone.
     for tag, sty in (
         ("p", _P_STYLE),
-        ("div", _BLOCK),
-        ("span", _BLOCK),
-        ("a", _BLOCK),
-        ("h1", _BLOCK),
-        ("h2", _BLOCK),
-        ("h3", _BLOCK),
         ("ul", _LIST_STYLE),
         ("ol", _LIST_STYLE),
         ("li", _BLOCK),
     ):
         fragment = re.sub(
-            rf"<{tag}([^>]*)>",
+            _open_tag_pattern(tag),
             lambda m, t=tag, s=sty: _open_tag(t, s, m),
             fragment,
             flags=re.I,
@@ -142,8 +135,40 @@ def _enhance_html_fragment(fragment: str) -> str:
             attrs += f' style="{_BLOCK}"'
         return f"<td{attrs}>"
 
-    fragment = re.sub(r"<td([^>]*)>", _fix_td, fragment, flags=re.I)
+    fragment = re.sub(r"<td(\s[^>]*)?>", _fix_td, fragment, flags=re.I)
     return fragment
+
+
+def _break_long_lines(html_text: str, limit: int = 800) -> str:
+    """Insert newlines so no MIME line exceeds SMTP-safe length."""
+    out: list[str] = []
+    for line in html_text.splitlines() or [html_text]:
+        while len(line.encode("utf-8")) > limit:
+            # Prefer breaking after a tag boundary.
+            chunk = line
+            cut = None
+            # Walk back from a byte-safe char budget.
+            approx = min(len(chunk), limit)
+            window = chunk[:approx]
+            for sep in (">", " ", ";", ","):
+                idx = window.rfind(sep)
+                if idx >= 40:
+                    cut = idx + 1
+                    break
+            if cut is None:
+                cut = max(40, approx // 2)
+            out.append(chunk[:cut])
+            line = chunk[cut:]
+        out.append(line)
+    return "\n".join(out)
+
+
+def _normalize_fragment(fragment: str) -> str:
+    fragment = _BAD_CHARS_RE.sub("", fragment or "")
+    # Put block tags on their own lines — keeps SMTP lines short and source readable.
+    fragment = re.sub(r"<(p|div|ul|ol|li|tr|td|table|h[1-6]|br)(\s|>)", r"\n<\1\2", fragment, flags=re.I)
+    fragment = re.sub(r"</(p|div|ul|ol|li|tr|td|table|h[1-6])>", r"</\1>\n", fragment, flags=re.I)
+    return fragment.strip()
 
 
 def plain_text_to_html(text: str) -> str:
@@ -158,13 +183,13 @@ def plain_text_to_html(text: str) -> str:
             continue
         escaped = html.escape(block).replace("\n", "<br>\n")
         parts.append(f'<p dir="rtl" style="{_P_STYLE}">{escaped}</p>')
-    return "".join(parts) or f'<p dir="rtl" style="{_P_STYLE}"></p>'
+    return "\n".join(parts) or f'<p dir="rtl" style="{_P_STYLE}"></p>'
 
 
 def wrap_email_html(content: str) -> str:
-    """Minimal RTL shell: font stack + alignment (no card chrome)."""
+    """Minimal RTL shell: font stack + alignment."""
     cell_style = _BLOCK
-    return f"""<!DOCTYPE html>
+    raw = f"""<!DOCTYPE html>
 <html lang="fa" dir="rtl" xmlns="http://www.w3.org/1999/xhtml">
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
@@ -173,7 +198,7 @@ def wrap_email_html(content: str) -> str:
 {LAYOUT_MARKER}
 {_head_styles()}
 </head>
-<body style="margin:0;padding:0;height:100% !important;width:100% !important;font-family:{_FONT_STACK} !important;">
+<body style="margin:0;padding:0;width:100%;font-family:{_FONT_STACK};">
 <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" dir="rtl" style="border-collapse:collapse;">
 <tr>
 <td dir="rtl" align="right" style="{cell_style}">
@@ -183,16 +208,17 @@ def wrap_email_html(content: str) -> str:
 </table>
 </body>
 </html>"""
+    return _break_long_lines(raw)
 
 
 def prepare_email_html(body: str) -> str:
-    body = (body or "").strip()
+    body = _BAD_CHARS_RE.sub("", (body or "").strip())
     if not body:
         return wrap_email_html(f'<p dir="rtl" style="{_P_STYLE}"></p>')
     if LAYOUT_MARKER in body:
-        return body
+        return _break_long_lines(body)
     if _looks_like_html(body):
-        content = _enhance_html_fragment(body)
+        content = _enhance_html_fragment(_normalize_fragment(body))
     else:
         content = plain_text_to_html(body)
     return wrap_email_html(content)
