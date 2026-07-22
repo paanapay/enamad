@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import smtplib
 import ssl
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+from email.message import EmailMessage
 from typing import Any
 
 from email_layout import prepare_email_html
+
 
 class EmailConfig:
     def __init__(
@@ -63,11 +63,15 @@ def send_email(
         raise EmailSendError("تنظیمات SMTP کامل نیست")
 
     html_body = prepare_email_html(body)
-    msg = MIMEMultipart("alternative")
+    # Prefer 8bit like marketing mailers so "Show original" stays readable HTML
+    # instead of a giant base64 blob (encoding is unrelated to fonts; Gmail
+    # decodes either way).
+    msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = config.from_addr
     msg["To"] = to_addr
-    msg.attach(MIMEText(html_body, "html", "utf-8"))
+    msg.set_content(html_body, subtype="html", charset="utf-8", cte="8bit")
+
     try:
         if config.use_tls:
             context = ssl.create_default_context()
@@ -81,12 +85,12 @@ def send_email(
                 server.ehlo()
                 if config.username:
                     server.login(config.username, config.password)
-                server.sendmail(config.from_addr, [to_addr], msg.as_string())
+                server.send_message(msg)
         else:
             with smtplib.SMTP(config.host, config.port, timeout=30) as server:
                 if config.username:
                     server.login(config.username, config.password)
-                server.sendmail(config.from_addr, [to_addr], msg.as_string())
+                server.send_message(msg)
     except Exception as exc:  # noqa: BLE001
         raise EmailSendError(str(exc)) from exc
 
