@@ -48,11 +48,28 @@ setup_logging()
 # Templates/static live at the repo root (`/app/templates`), not next to this
 # package module (`src/enamad/web/`). Without an explicit path, Flask looks
 # beside __name__ and fails with TemplateNotFound under gunicorn.
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+def _repo_root() -> Path:
+    here = Path(__file__).resolve().parent
+    for candidate in (here, *here.parents):
+        if (candidate / "templates" / "dashboard.html").is_file():
+            return candidate
+    # Fallback for the expected layout: src/enamad/web/webapp.py → repo root
+    return Path(__file__).resolve().parents[3]
+
+
+_REPO_ROOT = _repo_root()
+_TEMPLATE_DIR = _REPO_ROOT / "templates"
+_STATIC_DIR = _REPO_ROOT / "static"
+if not (_TEMPLATE_DIR / "dashboard.html").is_file():
+    raise RuntimeError(
+        f"Flask templates not found at {_TEMPLATE_DIR}. "
+        f"webapp.py={Path(__file__).resolve()}"
+    )
+
 app = Flask(
     __name__,
-    template_folder=str(_REPO_ROOT / "templates"),
-    static_folder=str(_REPO_ROOT / "static"),
+    template_folder=str(_TEMPLATE_DIR),
+    static_folder=str(_STATIC_DIR),
 )
 app.secret_key = os.environ.get("WEB_SECRET_KEY") or secrets.token_hex(32)
 app.register_blueprint(crm_bp)
