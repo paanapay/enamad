@@ -280,6 +280,7 @@ def _build_domain_where(
     city: str = "",
     phone_type: str = "",
     category: str = "",
+    categories: list[str] | None = None,
     approve_from: str = "",
     approve_to: str = "",
     created_from: str = "",
@@ -292,13 +293,18 @@ def _build_domain_where(
         where.append("province = %s")
         params.append(province)
     # category = business service/permit title from enamad_domain_services.
-    if category:
+    cats = [c for c in (categories or []) if c]
+    if category and category not in cats:
+        cats.append(category)
+    if cats:
+        placeholders = ",".join(["%s"] * len(cats))
         where.append(
             "EXISTS (SELECT 1 FROM enamad_domain_services s "
             "WHERE s.enamad_id = enamad_domains.enamad_id "
-            "AND s.code = enamad_domains.code AND s.service_title = %s)"
+            "AND s.code = enamad_domains.code "
+            f"AND s.service_title IN ({placeholders}))"
         )
-        params.append(category)
+        params.extend(cats)
     if city:
         where.append("city = %s")
         params.append(city)

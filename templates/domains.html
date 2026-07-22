@@ -46,10 +46,11 @@
     {% endfor %}
   </select>
 
-  <select name="category" title="دسته‌بندی (خدمات / مجوزها)" data-searchable data-ss-class="ss-wide" data-placeholder="جستجوی دسته‌بندی…">
-    <option value="">همه دسته‌بندی‌ها</option>
+  <select name="category" multiple data-searchable data-multiple
+          title="دسته‌بندی (خدمات / مجوزها)" data-ss-class="ss-wide"
+          data-placeholder="دسته‌بندی‌ها (چند انتخابی)…">
     {% for c in categories %}
-    <option value="{{ c }}" {{ 'selected' if category==c }}>{{ c }}</option>
+    <option value="{{ c }}" {{ 'selected' if c in selected_categories }}>{{ c }}</option>
     {% endfor %}
   </select>
 

@@ -32,6 +32,37 @@
   <div class="form-row" id="mobile-only-row">
     <label><input type="checkbox" name="mobile_only" {{ 'checked' if not row or row.mobile_only else '' }}> فقط شماره موبایل (نه تلفن ثابت)</label>
   </div>
+  <div class="form-row" id="sms-schedule-row">
+    <label>
+      <input type="checkbox" name="sms_schedule_enabled" id="sms-schedule-enabled"
+             {{ 'checked' if row and row.sms_window_start is not none and row.sms_window_end is not none else '' }}
+             onchange="toggleSchedule()">
+      محدود کردن ساعت ارسال پیامک خودکار
+    </label>
+    <div id="sms-schedule-hours" style="margin-top:10px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+      <label style="margin:0">از ساعت
+        <select name="sms_window_start" id="sms-window-start">
+          {% for h in hour_options %}
+          <option value="{{ h }}" {{ 'selected' if (row and row.sms_window_start == h) or (not row and h == 7) else '' }}>
+            {{ '%02d'|format(h) }}:00
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label style="margin:0">تا
+        <select name="sms_window_end" id="sms-window-end">
+          {% for h in hour_options %}
+          <option value="{{ h }}" {{ 'selected' if (row and row.sms_window_end == h) or (not row and h == 18) else '' }}>
+            {{ '%02d'|format(h) }}:00
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <p class="muted" style="margin:8px 0 0;font-size:13px">
+      اگر دامنه خارج از این بازه ثبت شود، پیامک در صف می‌ماند و در شروع بازه (مثلاً ۷ صبح) ارسال می‌شود.
+    </p>
+  </div>
   <div class="form-row">
     <label><input type="checkbox" name="is_active" {{ 'checked' if not row or row.is_active else '' }}> فعال</label>
   </div>
@@ -40,12 +71,20 @@
 {% endblock %}
 {% block scripts %}
 <script>
+function toggleSchedule() {
+  const on = document.getElementById('sms-schedule-enabled').checked;
+  document.getElementById('sms-schedule-hours').style.opacity = on ? '1' : '0.45';
+  document.getElementById('sms-window-start').disabled = !on;
+  document.getElementById('sms-window-end').disabled = !on;
+}
 function filterTemplates() {
   const ch = document.getElementById('channel-select').value;
   document.getElementById('mobile-only-row').style.display = ch === 'sms' ? 'block' : 'none';
+  document.getElementById('sms-schedule-row').style.display = ch === 'sms' ? 'block' : 'none';
   document.querySelectorAll('#template-select option').forEach(opt => {
     opt.hidden = opt.dataset.channel && opt.dataset.channel !== ch;
   });
+  toggleSchedule();
 }
 filterTemplates();
 </script>

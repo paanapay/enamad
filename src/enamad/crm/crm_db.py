@@ -5,6 +5,7 @@ import json
 import os
 import re
 import secrets
+from datetime import datetime
 from typing import Any
 
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -201,6 +202,8 @@ def ensure_crm_tables(conn) -> None:
               channel VARCHAR(16) NOT NULL,
               mobile_only TINYINT(1) NOT NULL DEFAULT 1,
               is_active TINYINT(1) NOT NULL DEFAULT 1,
+              sms_window_start TINYINT UNSIGNED NULL,
+              sms_window_end TINYINT UNSIGNED NULL,
               created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
               updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 ON UPDATE CURRENT_TIMESTAMP,
@@ -209,6 +212,27 @@ def ensure_crm_tables(conn) -> None:
               CONSTRAINT fk_rules_template
                 FOREIGN KEY (template_id) REFERENCES message_templates (id)
                 ON DELETE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS automation_queue (
+              id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+              project_id BIGINT UNSIGNED NOT NULL,
+              rule_id BIGINT UNSIGNED NOT NULL,
+              domain_id BIGINT UNSIGNED NOT NULL,
+              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (id),
+              UNIQUE KEY uk_queue_rule_domain (rule_id, domain_id),
+              KEY idx_queue_project (project_id),
+              KEY idx_queue_created (created_at),
+              CONSTRAINT fk_queue_rule
+                FOREIGN KEY (rule_id) REFERENCES automation_rules (id)
+                ON DELETE CASCADE,
+              CONSTRAINT fk_queue_domain
+                FOREIGN KEY (domain_id) REFERENCES enamad_domains (id)
+                ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """
         )
@@ -323,6 +347,19 @@ def ensure_crm_tables(conn) -> None:
                 "ALTER TABLE message_templates ADD COLUMN sms_preview_text TEXT NULL "
                 "AFTER token_mapping"
             )
+
+        _add_column_if_missing(
+            cursor,
+            "automation_rules",
+            "sms_window_start",
+            "TINYINT UNSIGNED NULL",
+        )
+        _add_column_if_missing(
+            cursor,
+            "automation_rules",
+            "sms_window_end",
+            "TINYINT UNSIGNED NULL",
+        )
 
     _migrate_projects(conn)
     ensure_default_super_admin(conn)
@@ -1006,12 +1043,29 @@ def get_automation_rule(
         return cursor.fetchone()
 
 
+def _normalize_sms_window(data: dict) -> tuple[int | None, int | None]:
+    """Return (start_hour, end_hour) or (None, None) when unrestricted."""
+    if data.get("channel") != "sms" or not data.get("sms_schedule_enabled"):
+        return None, None
+    try:
+        start = int(data.get("sms_window_start"))
+        end = int(data.get("sms_window_end"))
+    except (TypeError, ValueError):
+        raise ValueError("بازه ساعت ارسال پیامک نامعتبر است") from None
+    if not (0 <= start <= 23 and 0 <= end <= 23):
+        raise ValueError("ساعت ارسال باید بین ۰ تا ۲۳ باشد")
+    if start == end:
+        raise ValueError("ساعت شروع و پایان ارسال نباید یکسان باشد")
+    return start, end
+
+
 def save_automation_rule(
     conn, data: dict, *, project_id: int, rule_id: int | None = None
 ) -> int:
     template_id = int(data["template_id"])
     if not get_template(conn, template_id, project_id=project_id):
         raise ValueError("قالب انتخاب‌شده متعلق به این پروژه نیست")
+    window_start, window_end = _normalize_sms_window(data)
     payload = (
         data["name"],
         data.get("trigger_type") or "new_domain",
@@ -1019,6 +1073,8 @@ def save_automation_rule(
         data["channel"],
         1 if data.get("mobile_only", True) else 0,
         1 if data.get("is_active", True) else 0,
+        window_start,
+        window_end,
     )
     with conn.cursor() as cursor:
         if rule_id:
@@ -1026,7 +1082,8 @@ def save_automation_rule(
                 """
                 UPDATE automation_rules SET
                   name=%s, trigger_type=%s, template_id=%s, channel=%s,
-                  mobile_only=%s, is_active=%s
+                  mobile_only=%s, is_active=%s,
+                  sms_window_start=%s, sms_window_end=%s
                 WHERE id=%s AND project_id=%s
                 """,
                 (*payload, rule_id, project_id),
@@ -1036,8 +1093,8 @@ def save_automation_rule(
             """
             INSERT INTO automation_rules (
               project_id, name, trigger_type, template_id, channel,
-              mobile_only, is_active
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s)
+              mobile_only, is_active, sms_window_start, sms_window_end
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             (project_id, *payload),
         )
@@ -1393,7 +1450,18 @@ def _domain_outreach_select(project_id: int) -> tuple[str, list[Any]]:
 
 
 def _campaign_domain_filters(
-    query: str, phone_type: str
+    *,
+    project_id: int,
+    query: str = "",
+    phone_type: str = "",
+    province: str = "",
+    city: str = "",
+    categories: list[str] | None = None,
+    approve_from: str = "",
+    approve_to: str = "",
+    created_from: str = "",
+    created_to: str = "",
+    outreach: str = "",
 ) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
@@ -1408,8 +1476,75 @@ def _campaign_domain_filters(
     elif phone_type:
         clauses.append("d.phone_type = %s")
         params.append(phone_type)
+    if province:
+        clauses.append("d.province = %s")
+        params.append(province)
+    if city:
+        clauses.append("d.city = %s")
+        params.append(city)
+    cats = [c for c in (categories or []) if c]
+    if cats:
+        placeholders = ",".join(["%s"] * len(cats))
+        clauses.append(
+            "EXISTS (SELECT 1 FROM enamad_domain_services s "
+            "WHERE s.enamad_id = d.enamad_id AND s.code = d.code "
+            f"AND s.service_title IN ({placeholders}))"
+        )
+        params.extend(cats)
+    # approve_date is zero-padded Jalali ascii so lexicographic == chronological.
+    if approve_from:
+        clauses.append("d.approve_date >= %s")
+        params.append(approve_from)
+    if approve_to:
+        clauses.append("d.approve_date <= %s")
+        params.append(approve_to)
+    if created_from:
+        clauses.append("d.created_at >= %s")
+        params.append(created_from)
+    if created_to:
+        clauses.append("d.created_at < DATE_ADD(%s, INTERVAL 1 DAY)")
+        params.append(created_to)
+    if outreach == "no_sms":
+        clauses.append(
+            "NOT EXISTS ("
+            "SELECT 1 FROM message_logs ml "
+            "WHERE ml.domain_id = d.id AND ml.channel = 'sms' "
+            "AND ml.status = 'sent' AND ml.project_id = %s)"
+        )
+        params.append(project_id)
+    elif outreach == "no_email":
+        clauses.append(
+            "NOT EXISTS ("
+            "SELECT 1 FROM message_logs ml "
+            "WHERE ml.domain_id = d.id AND ml.channel = 'email' "
+            "AND ml.status = 'sent' AND ml.project_id = %s)"
+        )
+        params.append(project_id)
+    elif outreach == "no_sms_email":
+        clauses.append(
+            "NOT EXISTS ("
+            "SELECT 1 FROM message_logs ml "
+            "WHERE ml.domain_id = d.id AND ml.channel = 'sms' "
+            "AND ml.status = 'sent' AND ml.project_id = %s)"
+        )
+        params.append(project_id)
+        clauses.append(
+            "NOT EXISTS ("
+            "SELECT 1 FROM message_logs ml "
+            "WHERE ml.domain_id = d.id AND ml.channel = 'email' "
+            "AND ml.status = 'sent' AND ml.project_id = %s)"
+        )
+        params.append(project_id)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     return where, params
+
+
+_CAMPAIGN_DOMAIN_SORTS = {
+    "latest": "d.source_page ASC, d.source_row ASC, d.id ASC",
+    "newest": "d.created_at DESC, d.id DESC",
+    "approve": "d.approve_date DESC, d.id DESC",
+    "top": "d.rating DESC, d.updated_at DESC",
+}
 
 
 def list_domains_for_campaign(
@@ -1418,10 +1553,31 @@ def list_domains_for_campaign(
     project_id: int,
     query: str = "",
     phone_type: str = "",
+    province: str = "",
+    city: str = "",
+    categories: list[str] | None = None,
+    approve_from: str = "",
+    approve_to: str = "",
+    created_from: str = "",
+    created_to: str = "",
+    outreach: str = "",
+    sort: str = "latest",
     offset: int = 0,
     limit: int = 50,
 ) -> list[dict]:
-    where, params = _campaign_domain_filters(query, phone_type)
+    where, params = _campaign_domain_filters(
+        project_id=project_id,
+        query=query,
+        phone_type=phone_type,
+        province=province,
+        city=city,
+        categories=categories,
+        approve_from=approve_from,
+        approve_to=approve_to,
+        created_from=created_from,
+        created_to=created_to,
+        outreach=outreach,
+    )
     fields_sql, outreach_params = _domain_outreach_select(project_id)
     if query:
         order = """
@@ -1433,8 +1589,23 @@ def list_domains_for_campaign(
         """
         order_params = [query, f"{query}%"]
     else:
-        order = "ORDER BY d.source_page ASC, d.source_row ASC, d.id ASC"
+        order_sql = _CAMPAIGN_DOMAIN_SORTS.get(
+            sort, _CAMPAIGN_DOMAIN_SORTS["latest"]
+        )
+        order = f"ORDER BY {order_sql}"
         order_params = []
+        if sort == "approve":
+            where = (
+                f"{where} AND d.approve_date IS NOT NULL AND d.approve_date <> ''"
+                if where
+                else "WHERE d.approve_date IS NOT NULL AND d.approve_date <> ''"
+            )
+        elif sort == "top":
+            where = (
+                f"{where} AND d.rating >= 4"
+                if where
+                else "WHERE d.rating >= 4"
+            )
     sql = f"""
         SELECT {fields_sql}
         FROM enamad_domains d
@@ -1450,9 +1621,47 @@ def list_domains_for_campaign(
 
 
 def count_domains_for_campaign(
-    conn, *, query: str = "", phone_type: str = ""
+    conn,
+    *,
+    project_id: int,
+    query: str = "",
+    phone_type: str = "",
+    province: str = "",
+    city: str = "",
+    categories: list[str] | None = None,
+    approve_from: str = "",
+    approve_to: str = "",
+    created_from: str = "",
+    created_to: str = "",
+    outreach: str = "",
+    sort: str = "latest",
 ) -> int:
-    where, params = _campaign_domain_filters(query, phone_type)
+    where, params = _campaign_domain_filters(
+        project_id=project_id,
+        query=query,
+        phone_type=phone_type,
+        province=province,
+        city=city,
+        categories=categories,
+        approve_from=approve_from,
+        approve_to=approve_to,
+        created_from=created_from,
+        created_to=created_to,
+        outreach=outreach,
+    )
+    if not query:
+        if sort == "approve":
+            where = (
+                f"{where} AND d.approve_date IS NOT NULL AND d.approve_date <> ''"
+                if where
+                else "WHERE d.approve_date IS NOT NULL AND d.approve_date <> ''"
+            )
+        elif sort == "top":
+            where = (
+                f"{where} AND d.rating >= 4"
+                if where
+                else "WHERE d.rating >= 4"
+            )
     with conn.cursor() as cursor:
         cursor.execute(
             f"SELECT COUNT(*) AS c FROM enamad_domains d {where}",
@@ -1485,6 +1694,7 @@ def get_active_rules_for_trigger(conn, trigger_type: str) -> list[dict]:
             """
             SELECT r.id, r.project_id, r.name, r.trigger_type, r.template_id,
                    r.channel, r.mobile_only, r.is_active, r.created_at,
+                   r.sms_window_start, r.sms_window_end,
                    t.kavenegar_template, t.token_mapping,
                    t.email_subject, t.email_body, t.is_active AS template_active
             FROM automation_rules r
@@ -1499,6 +1709,89 @@ def get_active_rules_for_trigger(conn, trigger_type: str) -> list[dict]:
     for row in rows:
         row["token_mapping"] = _parse_json_field(row.get("token_mapping"))
     return rows
+
+
+def enqueue_automation(
+    conn, *, project_id: int, rule_id: int, domain_id: int
+) -> None:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT IGNORE INTO automation_queue (project_id, rule_id, domain_id)
+            VALUES (%s, %s, %s)
+            """,
+            (project_id, rule_id, domain_id),
+        )
+
+
+def automation_is_queued(
+    conn, *, project_id: int, rule_id: int, domain_id: int
+) -> bool:
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT 1 FROM automation_queue
+            WHERE project_id = %s AND rule_id = %s AND domain_id = %s
+            LIMIT 1
+            """,
+            (project_id, rule_id, domain_id),
+        )
+        return cursor.fetchone() is not None
+
+
+def list_due_automation_queue(conn, *, limit: int = 200) -> list[dict]:
+    """Queued automation rows whose SMS window is currently open (or unrestricted)."""
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT q.id AS queue_id, q.project_id, q.rule_id, q.domain_id,
+                   q.created_at AS queued_at,
+                   r.name AS rule_name, r.channel, r.mobile_only,
+                   r.template_id, r.sms_window_start, r.sms_window_end,
+                   r.is_active AS rule_active,
+                   t.kavenegar_template, t.token_mapping,
+                   t.email_subject, t.email_body, t.is_active AS template_active
+            FROM automation_queue q
+            JOIN automation_rules r ON r.id = q.rule_id
+            JOIN message_templates t ON t.id = r.template_id
+            WHERE r.is_active = 1 AND t.is_active = 1
+            ORDER BY q.id ASC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        rows = list(cursor.fetchall())
+    for row in rows:
+        row["token_mapping"] = _parse_json_field(row.get("token_mapping"))
+    return rows
+
+
+def delete_automation_queue_row(conn, queue_id: int) -> None:
+    with conn.cursor() as cursor:
+        cursor.execute("DELETE FROM automation_queue WHERE id = %s", (queue_id,))
+
+
+def is_within_sms_window(
+    window_start: Any, window_end: Any, *, now: datetime | None = None
+) -> bool:
+    """True when SMS may be sent now.
+
+    Window is [start, end) in local hours. Crossing midnight is supported
+    (e.g. 22 → 6). Missing bounds mean unrestricted.
+    """
+    if window_start is None or window_end is None:
+        return True
+    try:
+        start = int(window_start)
+        end = int(window_end)
+    except (TypeError, ValueError):
+        return True
+    if start == end:
+        return True
+    hour = (now or datetime.now()).hour
+    if start < end:
+        return start <= hour < end
+    return hour >= start or hour < end
 
 
 def automation_already_handled(

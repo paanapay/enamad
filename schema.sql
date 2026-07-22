@@ -191,6 +191,8 @@ CREATE TABLE IF NOT EXISTS automation_rules (
   channel VARCHAR(16) NOT NULL,
   mobile_only TINYINT(1) NOT NULL DEFAULT 1,
   is_active TINYINT(1) NOT NULL DEFAULT 1,
+  sms_window_start TINYINT UNSIGNED NULL,
+  sms_window_end TINYINT UNSIGNED NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
@@ -199,6 +201,24 @@ CREATE TABLE IF NOT EXISTS automation_rules (
   CONSTRAINT fk_rules_template
     FOREIGN KEY (template_id) REFERENCES message_templates (id)
     ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS automation_queue (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  project_id BIGINT UNSIGNED NOT NULL,
+  rule_id BIGINT UNSIGNED NOT NULL,
+  domain_id BIGINT UNSIGNED NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_queue_rule_domain (rule_id, domain_id),
+  KEY idx_queue_project (project_id),
+  KEY idx_queue_created (created_at),
+  CONSTRAINT fk_queue_rule
+    FOREIGN KEY (rule_id) REFERENCES automation_rules (id)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_queue_domain
+    FOREIGN KEY (domain_id) REFERENCES enamad_domains (id)
+    ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS message_campaigns (

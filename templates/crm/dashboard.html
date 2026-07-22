@@ -56,7 +56,13 @@
       <tr>
         <td>{{ c.name }}</td>
         <td>{{ 'پیامک' if c.channel=='sms' else 'ایمیل' }}</td>
-        <td><span class="badge {{ 'ok' if c.status=='completed' else 'no' }}">{{ c.status }}</span></td>
+        <td>
+          {% if c.status == 'completed' %}<span class="badge ok">تکمیل شد</span>
+          {% elif c.status == 'running' %}<span class="badge">در حال ارسال</span>
+          {% elif c.status == 'queued' %}<span class="badge">در صف</span>
+          {% elif c.status == 'failed' %}<span class="badge no">خطا</span>
+          {% else %}<span class="badge muted">پیش‌نویس</span>{% endif %}
+        </td>
         <td>{{ c.sent_count }}/{{ c.failed_count }}</td>
         <td><a href="{{ url_for('crm.campaign_detail', campaign_id=c.id) }}">جزئیات ›</a></td>
       </tr>

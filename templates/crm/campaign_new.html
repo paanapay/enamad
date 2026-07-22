@@ -8,28 +8,28 @@
 <form method="post" class="panel" id="campaign-form">
   <div class="form-row">
     <label>نام کمپین *</label>
-    <input type="text" name="name" required style="width:100%">
+    <input type="text" name="name" id="campaign-name" required style="width:100%" value="{{ form.name }}">
   </div>
   <div class="form-row">
     <label>کانال *</label>
     <select name="channel" id="channel-select" onchange="filterTemplates()">
-      <option value="sms">پیامک</option>
-      <option value="email">ایمیل</option>
+      <option value="sms" {{ 'selected' if form.channel=='sms' else '' }}>پیامک</option>
+      <option value="email" {{ 'selected' if form.channel=='email' else '' }}>ایمیل</option>
     </select>
   </div>
   <div class="form-row">
     <label>قالب *</label>
     <select name="template_id" id="template-select" required>
       {% for t in templates %}
-      <option value="{{ t.id }}" data-channel="{{ t.channel }}">{{ t.name }} ({{ t.channel }})</option>
+      <option value="{{ t.id }}" data-channel="{{ t.channel }}" {{ 'selected' if form.template_id|string == t.id|string else '' }}>{{ t.name }} ({{ t.channel }})</option>
       {% endfor %}
     </select>
   </div>
   <div class="form-row" id="mobile-only-row">
-    <label><input type="checkbox" name="mobile_only" checked> فقط موبایل (پیامک به تلفن ثابت ارسال نشود)</label>
+    <label><input type="checkbox" name="mobile_only" id="mobile-only" {{ 'checked' if form.mobile_only else '' }}> فقط موبایل (پیامک به تلفن ثابت ارسال نشود)</label>
   </div>
   <div class="form-row">
-    <label><input type="checkbox" name="send_now" checked> بلافاصله ارسال شود</label>
+    <label><input type="checkbox" name="send_now" id="send-now" {{ 'checked' if form.send_now else '' }}> بلافاصله ارسال شود</label>
   </div>
 
   <input type="hidden" name="domain_ids" id="domain-ids-field" value="{{ selected_ids|join(',') }}">
@@ -37,11 +37,14 @@
   <div class="panel" style="margin-top:8px;padding:0;overflow:auto">
     <div style="padding:18px 20px 0">
       <h2 style="margin:0 0 6px">انتخاب دامنه‌ها *</h2>
-      <p class="muted" style="margin:0 0 14px;font-size:13px">
-        پیش‌فرض: ترتیب سایت اینماد. انتخاب‌ها هنگام جابجایی بین صفحات حفظ می‌شوند.
-        <span id="selected-count">{{ selected_ids|length|group }}</span> دامنه انتخاب شده.
-        <a href="#" id="clear-selection" style="margin-inline-start:8px">پاک کردن انتخاب‌ها</a>
+      <p class="muted" style="margin:0 0 10px;font-size:13px">
+        پیش‌فرض: ترتیب سایت اینماد. انتخاب‌ها و فیلدهای کمپین هنگام جابجایی بین صفحات حفظ می‌شوند.
       </p>
+      <div id="selected-summary" class="selected-summary">
+        <span id="selected-count">{{ selected_ids|length|group }}</span>
+        <span class="selected-summary-label">دامنه انتخاب شده</span>
+        <a href="#" id="clear-selection" style="margin-inline-start:12px;font-size:13px;font-weight:500">پاک کردن انتخاب‌ها</a>
+      </div>
     </div>
 
     <div class="searchbar" style="padding:0 20px 14px">
@@ -52,9 +55,69 @@
         <option value="landline" {{ 'selected' if phone_filter=='landline' }}>فقط ثابت</option>
         <option value="mixed" {{ 'selected' if phone_filter=='mixed' }}>موبایل+ثابت</option>
       </select>
+      <select id="sort-filter" title="مرتب‌سازی">
+        <option value="latest" {{ 'selected' if sort=='latest' }}>ترتیب سایت</option>
+        <option value="newest" {{ 'selected' if sort=='newest' }}>جدیدترین ثبت</option>
+        <option value="approve" {{ 'selected' if sort=='approve' }}>جدیدترین صدور</option>
+        <option value="top" {{ 'selected' if sort=='top' }}>برترین امتیاز</option>
+      </select>
+      <select id="outreach-filter" title="وضعیت ارسال قبلی">
+        <option value="">همه دامنه‌ها</option>
+        <option value="no_sms" {{ 'selected' if outreach=='no_sms' }}>بدون پیامک ارسال‌شده</option>
+        <option value="no_email" {{ 'selected' if outreach=='no_email' }}>بدون ایمیل ارسال‌شده</option>
+        <option value="no_sms_email" {{ 'selected' if outreach=='no_sms_email' }}>بدون پیامک و ایمیل</option>
+      </select>
+      <select id="f-province" data-searchable data-placeholder="جستجوی استان…">
+        <option value="">همه استان‌ها</option>
+        {% for p in provinces %}
+        <option value="{{ p }}" {{ 'selected' if province==p }}>{{ p }}</option>
+        {% endfor %}
+      </select>
+      <select id="f-city" data-selected="{{ city }}" data-searchable data-placeholder="جستجوی شهر…">
+        <option value="">همه شهرها</option>
+        {% for row in province_cities %}
+        <option value="{{ row.city }}" data-province="{{ row.province }}" {{ 'selected' if city==row.city }}>{{ row.city }}</option>
+        {% endfor %}
+      </select>
+      <select id="f-category" name="category_ui" multiple data-searchable data-multiple
+              data-ss-class="ss-wide" data-placeholder="دسته‌بندی‌ها (چند انتخابی)…">
+        {% for c in category_options %}
+        <option value="{{ c }}" {{ 'selected' if c in categories }}>{{ c }}</option>
+        {% endfor %}
+      </select>
+
+      <span class="filter-field">
+        <label>تاریخ صدور از</label>
+        <input type="text" data-jdp data-jdp-only-date
+               data-jdp-target-value-input="#approve_from_g" data-jdp-target-value-type="gregorian"
+               value="{{ approve_from_disp }}" placeholder="۱۴۰۳/۰۱/۰۱" autocomplete="off">
+        <input type="hidden" id="approve_from_g" value="{{ approve_from }}">
+      </span>
+      <span class="filter-field">
+        <label>تا</label>
+        <input type="text" data-jdp data-jdp-only-date
+               data-jdp-target-value-input="#approve_to_g" data-jdp-target-value-type="gregorian"
+               value="{{ approve_to_disp }}" placeholder="۱۴۰۳/۱۲/۲۹" autocomplete="off">
+        <input type="hidden" id="approve_to_g" value="{{ approve_to }}">
+      </span>
+      <span class="filter-field">
+        <label>تاریخ ثبت از</label>
+        <input type="text" data-jdp data-jdp-only-date
+               data-jdp-target-value-input="#created_from_g" data-jdp-target-value-type="gregorian"
+               value="{{ created_from_disp }}" placeholder="۱۴۰۳/۰۱/۰۱" autocomplete="off">
+        <input type="hidden" id="created_from_g" value="{{ created_from }}">
+      </span>
+      <span class="filter-field">
+        <label>تا</label>
+        <input type="text" data-jdp data-jdp-only-date
+               data-jdp-target-value-input="#created_to_g" data-jdp-target-value-type="gregorian"
+               value="{{ created_to_disp }}" placeholder="۱۴۰۳/۱۲/۲۹" autocomplete="off">
+        <input type="hidden" id="created_to_g" value="{{ created_to }}">
+      </span>
+
       <button class="btn ghost" type="button" onclick="applyDomainFilters()">اعمال فیلتر</button>
-      {% if query or phone_filter %}
-      <a class="btn ghost" href="{{ url_for('crm.campaign_new') }}">حذف فیلتر</a>
+      {% if has_filters %}
+      <a class="btn ghost" href="{{ url_for('crm.campaign_new') }}" id="clear-filters">حذف فیلتر</a>
       {% endif %}
     </div>
 
@@ -108,12 +171,14 @@
 </form>
 {% endblock %}
 {% block scripts %}
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/jalalidatepicker/jalalidatepicker.min.css') }}">
+<script src="{{ url_for('static', filename='vendor/jalalidatepicker/jalalidatepicker.min.js') }}"></script>
 <script>
-// Selection survives pagination via sessionStorage (URLs break with large
-// id lists). Everything is kept as strings — checkbox values are strings,
-// so mixing in numbers from the server would silently drop matches.
+// Selection + campaign meta survive pagination via sessionStorage.
 const STORAGE_KEY = 'campaign-new-selection';
+const FORM_KEY = 'campaign-new-form';
 const serverSelected = ({{ selected_ids|tojson }}).map(String);
+const serverForm = {{ form|tojson }};
 
 function loadStored() {
   try {
@@ -127,6 +192,41 @@ function persist() {
   try {
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify([...selected]));
   } catch (e) { /* storage full/unavailable — hidden field still has the ids */ }
+}
+
+function persistForm() {
+  const data = {
+    name: document.getElementById('campaign-name').value,
+    channel: document.getElementById('channel-select').value,
+    template_id: document.getElementById('template-select').value,
+    mobile_only: document.getElementById('mobile-only').checked,
+    send_now: document.getElementById('send-now').checked,
+  };
+  try { sessionStorage.setItem(FORM_KEY, JSON.stringify(data)); } catch (e) {}
+}
+
+function restoreForm() {
+  let stored = null;
+  try { stored = JSON.parse(sessionStorage.getItem(FORM_KEY) || 'null'); } catch (e) {}
+  // Server values win after a failed POST; otherwise restore from sessionStorage.
+  const hasServer = !!(serverForm && serverForm.name);
+  const data = hasServer ? serverForm : (stored || serverForm || {});
+  if (!data) return;
+  const nameEl = document.getElementById('campaign-name');
+  const chEl = document.getElementById('channel-select');
+  const tplEl = document.getElementById('template-select');
+  const mobEl = document.getElementById('mobile-only');
+  const nowEl = document.getElementById('send-now');
+  if (data.name != null) nameEl.value = data.name;
+  if (data.channel) chEl.value = data.channel;
+  if (data.template_id) {
+    const want = String(data.template_id);
+    [...tplEl.options].forEach(opt => {
+      if (opt.value === want) opt.selected = true;
+    });
+  }
+  if (typeof data.mobile_only === 'boolean') mobEl.checked = data.mobile_only;
+  if (typeof data.send_now === 'boolean') nowEl.checked = data.send_now;
 }
 
 function syncHiddenField() {
@@ -147,20 +247,48 @@ function syncCheckboxes() {
   }
 }
 
+function selectedCategories() {
+  const el = document.getElementById('f-category');
+  if (!el) return [];
+  return [...el.selectedOptions].map(o => o.value).filter(Boolean);
+}
+
 function campaignListUrl(page) {
   const params = new URLSearchParams();
   const q = document.getElementById('domain-search').value.trim();
   const phone = document.getElementById('phone-filter').value;
+  const sort = document.getElementById('sort-filter').value;
+  const outreach = document.getElementById('outreach-filter').value;
+  const province = document.getElementById('f-province').value;
+  const city = document.getElementById('f-city').value;
+  const approveFrom = document.getElementById('approve_from_g').value;
+  const approveTo = document.getElementById('approve_to_g').value;
+  const createdFrom = document.getElementById('created_from_g').value;
+  const createdTo = document.getElementById('created_to_g').value;
   if (q) params.set('q', q);
   if (phone) params.set('phone_type', phone);
+  if (sort && sort !== 'latest') params.set('sort', sort);
+  if (outreach) params.set('outreach', outreach);
+  if (province) params.set('province', province);
+  if (city) params.set('city', city);
+  selectedCategories().forEach(c => params.append('category', c));
+  if (approveFrom) params.set('approve_from', approveFrom);
+  if (approveTo) params.set('approve_to', approveTo);
+  if (createdFrom) params.set('created_from', createdFrom);
+  if (createdTo) params.set('created_to', createdTo);
   if (page) params.set('page', String(page));
   const qs = params.toString();
   return '{{ url_for("crm.campaign_new") }}' + (qs ? '?' + qs : '');
 }
 
-function applyDomainFilters() {
+function navigateAway(url) {
   persist();
-  window.location.href = campaignListUrl(0);
+  persistForm();
+  window.location.href = url;
+}
+
+function applyDomainFilters() {
+  navigateAway(campaignListUrl(0));
 }
 
 document.querySelectorAll('.domain-pick').forEach(cb => {
@@ -190,8 +318,7 @@ if (pickPage) {
 document.querySelectorAll('#domain-pager a[data-page]').forEach(link => {
   link.addEventListener('click', e => {
     e.preventDefault();
-    persist();
-    window.location.href = campaignListUrl(link.dataset.page);
+    navigateAway(campaignListUrl(link.dataset.page));
   });
 });
 
@@ -204,6 +331,16 @@ document.getElementById('clear-selection').addEventListener('click', e => {
   syncCheckboxes();
 });
 
+const clearFilters = document.getElementById('clear-filters');
+if (clearFilters) {
+  clearFilters.addEventListener('click', e => {
+    e.preventDefault();
+    persist();
+    persistForm();
+    window.location.href = '{{ url_for("crm.campaign_new") }}';
+  });
+}
+
 document.getElementById('domain-search').addEventListener('keydown', e => {
   if (e.key === 'Enter') {
     e.preventDefault();
@@ -211,11 +348,18 @@ document.getElementById('domain-search').addEventListener('keydown', e => {
   }
 });
 
+['campaign-name', 'channel-select', 'template-select', 'mobile-only', 'send-now'].forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('change', persistForm);
+  el.addEventListener('input', persistForm);
+});
+
 document.getElementById('campaign-form').addEventListener('submit', () => {
   syncHiddenField();
-  // Selection is now in the POST body; if validation fails the server sends
-  // the ids back and they are re-merged into storage on the next load.
+  persistForm();
   try { sessionStorage.removeItem(STORAGE_KEY); } catch (e) {}
+  try { sessionStorage.removeItem(FORM_KEY); } catch (e) {}
 });
 
 function filterTemplates() {
@@ -227,8 +371,41 @@ function filterTemplates() {
       opt.selected = true;
     }
   });
+  persistForm();
 }
 
+document.addEventListener('DOMContentLoaded', function () {
+  if (window.jalaliDatepicker) {
+    jalaliDatepicker.startWatch({
+      persianDigits: true,
+      targetValueInput: 'attr',
+      targetValueType: 'attr',
+    });
+  }
+
+  var provinceEl = document.getElementById('f-province');
+  var cityEl = document.getElementById('f-city');
+  if (provinceEl && cityEl) {
+    var options = Array.prototype.slice.call(cityEl.querySelectorAll('option[data-province]'));
+    var applyProvince = function (keepValue) {
+      var prov = provinceEl.value;
+      var current = keepValue ? cityEl.value : '';
+      var stillValid = false;
+      options.forEach(function (opt) {
+        var match = !prov || opt.getAttribute('data-province') === prov;
+        opt.hidden = !match;
+        opt.disabled = !match;
+        if (match && opt.value === current) { stillValid = true; }
+      });
+      if (!stillValid) cityEl.value = '';
+      cityEl.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    provinceEl.addEventListener('change', function () { applyProvince(false); });
+    applyProvince(true);
+  }
+});
+
+restoreForm();
 syncHiddenField();
 syncCheckboxes();
 filterTemplates();

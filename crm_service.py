@@ -11,12 +11,17 @@ from crm_db import (
     build_kavenegar_tokens,
     get_active_rules_for_trigger,
     automation_already_handled,
+    automation_is_queued,
+    delete_automation_queue_row,
+    enqueue_automation,
     get_all_settings,
     get_campaign,
     get_domains_by_ids,
     get_template,
     insert_message_log,
     is_dry_run,
+    is_within_sms_window,
+    list_due_automation_queue,
     update_campaign_counts,
 )
 from email_sender import EmailConfig, EmailSendError, send_email
@@ -394,6 +399,98 @@ def start_campaign_async(mysql_config, campaign_id: int) -> bool:
     return True
 
 
+def process_pending_automations(conn, *, limit: int = 200) -> int:
+    """Send queued SMS automations whose send window is currently open.
+
+    Returns the number of queue rows processed (sent or discarded).
+    """
+    rows = list_due_automation_queue(conn, limit=limit)
+    if not rows:
+        return 0
+
+    now = _now()
+    settings_by_project: dict[int, dict[str, str]] = {}
+    domain_cache: dict[int, dict] = {}
+    processed = 0
+
+    for row in rows:
+        queue_id = int(row["queue_id"])
+        rule_id = int(row["rule_id"])
+        project_id = int(row["project_id"])
+        domain_id = int(row["domain_id"])
+
+        if row.get("channel") == "sms" and not is_within_sms_window(
+            row.get("sms_window_start"),
+            row.get("sms_window_end"),
+            now=now,
+        ):
+            continue
+
+        if automation_already_handled(
+            conn, domain_id, project_id=project_id, rule_id=rule_id
+        ):
+            delete_automation_queue_row(conn, queue_id)
+            processed += 1
+            continue
+
+        if domain_id not in domain_cache:
+            found = get_domains_by_ids(conn, [domain_id])
+            domain_cache[domain_id] = found[0] if found else {}
+        domain_row = domain_cache[domain_id]
+        if not domain_row:
+            delete_automation_queue_row(conn, queue_id)
+            processed += 1
+            continue
+
+        if project_id not in settings_by_project:
+            settings_by_project[project_id] = get_all_settings(
+                conn, project_id=project_id
+            )
+        settings = settings_by_project[project_id]
+        channel = row["channel"]
+        template = {
+            "id": row["template_id"],
+            "channel": channel,
+            "kavenegar_template": row.get("kavenegar_template"),
+            "token_mapping": row.get("token_mapping"),
+            "email_subject": row.get("email_subject"),
+            "email_body": row.get("email_body"),
+        }
+        try:
+            send_to_domain(
+                conn,
+                domain_row=domain_row,
+                template=template,
+                channel=channel,
+                project_id=project_id,
+                mobile_only=bool(row.get("mobile_only", 1)),
+                automation_rule_id=rule_id,
+                settings=settings,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception(
+                "queued automation failed domain=%s rule=%s", domain_id, rule_id
+            )
+            insert_message_log(
+                conn,
+                {
+                    "project_id": project_id,
+                    "automation_rule_id": rule_id,
+                    "domain_id": domain_id,
+                    "channel": channel,
+                    "status": "failed",
+                    "error_message": str(exc),
+                    "template_id": row["template_id"],
+                },
+            )
+        delete_automation_queue_row(conn, queue_id)
+        processed += 1
+
+    if processed:
+        conn.commit()
+    return processed
+
+
 def process_new_domains(conn, domain_ids: list[int]) -> None:
     """Run automation rules only for domains created *after* each rule existed.
 
@@ -405,7 +502,13 @@ def process_new_domains(conn, domain_ids: list[int]) -> None:
     when a later trustseal refresh fills their phone/email.
 
     Each rule uses its own project settings and logs so tenants stay isolated.
+
+    SMS rules with a send window queue domains that arrive outside the window
+    and are flushed later by process_pending_automations.
     """
+    # Flush anything that became due (e.g. night-time queue when morning scrape runs).
+    process_pending_automations(conn)
+
     if not domain_ids:
         return
 
@@ -415,6 +518,7 @@ def process_new_domains(conn, domain_ids: list[int]) -> None:
 
     domains = get_domains_by_ids(conn, domain_ids)
     settings_by_project: dict[int, dict[str, str]] = {}
+    now = _now()
 
     for domain_row in domains:
         domain_created = domain_row.get("created_at")
@@ -435,6 +539,14 @@ def process_new_domains(conn, domain_ids: list[int]) -> None:
             ):
                 continue
 
+            if automation_is_queued(
+                conn,
+                project_id=project_id,
+                rule_id=rule_id,
+                domain_id=int(domain_row["id"]),
+            ):
+                continue
+
             channel = rule["channel"]
             # Wait for contact info — do not write a skip log yet.
             if channel == "sms" and not context.get("mobile_phone"):
@@ -444,6 +556,20 @@ def process_new_domains(conn, domain_ids: list[int]) -> None:
             if channel == "email" and not (
                 context.get("email_normalized") or domain_row.get("email")
             ):
+                continue
+
+            # Outside SMS send window → queue for the next open window.
+            if channel == "sms" and not is_within_sms_window(
+                rule.get("sms_window_start"),
+                rule.get("sms_window_end"),
+                now=now,
+            ):
+                enqueue_automation(
+                    conn,
+                    project_id=project_id,
+                    rule_id=rule_id,
+                    domain_id=int(domain_row["id"]),
+                )
                 continue
 
             if project_id not in settings_by_project:

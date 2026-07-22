@@ -64,7 +64,7 @@
         <td>{{ l.domain or '—' }}</td>
         <td class="mono">{{ l.recipient or '—' }}</td>
         <td>{{ l.recipient_type or '—' }}</td>
-        <td><span class="badge {{ 'ok' if l.status=='sent' else ('no' if l.status=='failed' else '') }}">{{ l.status }}</span></td>
+        <td><span class="badge {{ 'ok' if l.status=='sent' else ('test' if l.status=='test' else ('no' if l.status=='failed' else 'muted')) }}">{{ log_statuses.get(l.status, l.status) }}</span></td>
         <td class="muted" style="font-size:12px">{{ l.error_message or '' }}</td>
         <td class="mono">{{ (l.sent_at or l.created_at)|jdatetime }}</td>
       </tr>

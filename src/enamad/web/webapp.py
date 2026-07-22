@@ -372,7 +372,10 @@ def domains():
     phone_type = (request.args.get("phone_type") or "").strip()
     province = (request.args.get("province") or "").strip()
     city = (request.args.get("city") or "").strip()
-    category = (request.args.get("category") or "").strip()
+    selected_categories = [
+        c.strip() for c in request.args.getlist("category") if c and c.strip()
+    ]
+    # Legacy single ?category= still works via getlist.
 
     # Date inputs arrive as gregorian ISO (yyyy-mm-dd) from the Jalali picker.
     approve_from_raw = (request.args.get("approve_from") or "").strip()
@@ -384,7 +387,7 @@ def domains():
         "province": province,
         "city": city,
         "phone_type": phone_type,
-        "category": category,
+        "categories": selected_categories,
         # approve_date is stored as Jalali, so convert bounds to Jalali strings.
         "approve_from": _greg_to_jalali(approve_from_raw),
         "approve_to": _greg_to_jalali(approve_to_raw),
@@ -423,7 +426,7 @@ def domains():
             "phone_type": phone_type,
             "province": province,
             "city": city,
-            "category": category,
+            "category": selected_categories,
             "approve_from": approve_from_raw,
             "approve_to": approve_to_raw,
             "created_from": created_from,
@@ -432,7 +435,7 @@ def domains():
         if v
     }
     has_filters = any(
-        [phone_type, province, city, category, approve_from_raw, approve_to_raw,
+        [phone_type, province, city, selected_categories, approve_from_raw, approve_to_raw,
          created_from, created_to]
     )
     return render_template(
@@ -446,7 +449,8 @@ def domains():
         phone_type=phone_type,
         province=province,
         city=city,
-        category=category,
+        category="",
+        selected_categories=selected_categories,
         provinces=provinces,
         province_cities=province_cities,
         categories=categories,

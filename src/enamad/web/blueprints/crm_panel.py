@@ -379,6 +379,9 @@ def automation_form(rule_id: int | None = None):
             "channel": request.form.get("channel", "sms"),
             "mobile_only": request.form.get("mobile_only") == "on",
             "is_active": request.form.get("is_active") == "on",
+            "sms_schedule_enabled": request.form.get("sms_schedule_enabled") == "on",
+            "sms_window_start": request.form.get("sms_window_start"),
+            "sms_window_end": request.form.get("sms_window_end"),
         }
         if not data["name"] or not data["template_id"]:
             flash("نام و قالب الزامی است.", "error")
@@ -401,7 +404,12 @@ def automation_form(rule_id: int | None = None):
             row = get_automation_rule(conn, rule_id, project_id=project_id)
             if not row:
                 abort(404)
-    return render_template("crm/automation_form.html", row=row, templates=templates)
+    return render_template(
+        "crm/automation_form.html",
+        row=row,
+        templates=templates,
+        hour_options=list(range(24)),
+    )
 
 
 @crm_bp.route("/automations/<int:rule_id>/delete", methods=["POST"])
@@ -454,14 +462,28 @@ def campaign_new():
     page_size = 50
     project_id = _project_id()
     post_selected_ids: list[int] = []
+    form_defaults = {
+        "name": "",
+        "channel": "sms",
+        "template_id": "",
+        "mobile_only": True,
+        "send_now": True,
+    }
     if request.method == "POST":
         domain_ids = _parse_selected_domain_ids(request.form)
-        data = {
+        form_defaults = {
             "name": request.form.get("name", "").strip(),
             "channel": request.form.get("channel", "sms"),
-            "template_id": request.form.get("template_id"),
-            "target_domain_ids": domain_ids,
+            "template_id": request.form.get("template_id") or "",
             "mobile_only": request.form.get("mobile_only") == "on",
+            "send_now": request.form.get("send_now") == "on",
+        }
+        data = {
+            "name": form_defaults["name"],
+            "channel": form_defaults["channel"],
+            "template_id": form_defaults["template_id"],
+            "target_domain_ids": domain_ids,
+            "mobile_only": form_defaults["mobile_only"],
             "created_by": session.get("admin_id"),
         }
         if not data["name"] or not data["template_id"] or not domain_ids:
@@ -473,10 +495,10 @@ def campaign_new():
                     campaign_id = create_campaign(conn, data, project_id=project_id)
                     # Mark as queued before the worker picks it up so the detail
                     # page shows a meaningful status immediately.
-                    if request.form.get("send_now") == "on":
+                    if form_defaults["send_now"]:
                         update_campaign_counts(conn, campaign_id, status="queued")
                     conn.commit()
-                if request.form.get("send_now") == "on":
+                if form_defaults["send_now"]:
                     start_campaign_async(_config().mysql, campaign_id)
                     flash(
                         f"کمپین در صف ارسال قرار گرفت ({len(domain_ids)} دامنه). "
@@ -490,35 +512,110 @@ def campaign_new():
                 flash(str(exc), "error")
                 post_selected_ids = domain_ids
 
+    from jalali_utils import format_jdate, is_jalali_date
+
+    def _greg_to_jalali(value: str) -> str:
+        value = (value or "").strip()
+        if not value:
+            return ""
+        jalali = format_jdate(value)
+        return jalali if is_jalali_date(jalali) else ""
+
     query = (request.args.get("q") or "").strip()
     phone_filter = request.args.get("phone_type", "")
+    province = (request.args.get("province") or "").strip()
+    city = (request.args.get("city") or "").strip()
+    categories = [
+        c.strip() for c in request.args.getlist("category") if c and c.strip()
+    ]
+    sort = request.args.get("sort", "latest")
+    if sort not in ("latest", "newest", "approve", "top"):
+        sort = "latest"
+    outreach = (request.args.get("outreach") or "").strip()
+    if outreach not in ("no_sms", "no_email", "no_sms_email"):
+        outreach = ""
+    approve_from_raw = (request.args.get("approve_from") or "").strip()
+    approve_to_raw = (request.args.get("approve_to") or "").strip()
+    created_from = (request.args.get("created_from") or "").strip()
+    created_to = (request.args.get("created_to") or "").strip()
+    approve_from = _greg_to_jalali(approve_from_raw)
+    approve_to = _greg_to_jalali(approve_to_raw)
+
     selected_ids = post_selected_ids or _parse_selected_domain_ids(request.args)
     try:
         page = max(0, int(request.args.get("page", 0)))
     except ValueError:
         page = 0
+
+    filter_kwargs = {
+        "project_id": project_id,
+        "query": query,
+        "phone_type": phone_filter,
+        "province": province,
+        "city": city,
+        "categories": categories,
+        "approve_from": approve_from,
+        "approve_to": approve_to,
+        "created_from": created_from,
+        "created_to": created_to,
+        "outreach": outreach,
+        "sort": sort,
+    }
     with mysql_connection(_config().mysql) as conn:
         templates = list_templates(conn, project_id=project_id)
         from crm_db import count_domains_for_campaign, list_domains_for_campaign
 
-        total = count_domains_for_campaign(
-            conn, query=query, phone_type=phone_filter
-        )
+        total = count_domains_for_campaign(conn, **filter_kwargs)
         domains = list_domains_for_campaign(
             conn,
-            project_id=project_id,
-            query=query,
-            phone_type=phone_filter,
+            **filter_kwargs,
             offset=page * page_size,
             limit=page_size,
         )
+        provinces = q.get_all_provinces(conn)
+        province_cities = q.get_province_cities(conn)
+        category_options = q.get_service_categories(conn)
+
     pages = (total + page_size - 1) // page_size if total else 1
+    has_filters = any(
+        [
+            query,
+            phone_filter,
+            province,
+            city,
+            categories,
+            approve_from_raw,
+            approve_to_raw,
+            created_from,
+            created_to,
+            outreach,
+            sort != "latest",
+        ]
+    )
     return render_template(
         "crm/campaign_new.html",
         templates=templates,
         domains=domains,
         query=query,
         phone_filter=phone_filter,
+        province=province,
+        city=city,
+        categories=categories,
+        sort=sort,
+        outreach=outreach,
+        provinces=provinces,
+        province_cities=province_cities,
+        category_options=category_options,
+        approve_from=approve_from_raw,
+        approve_to=approve_to_raw,
+        approve_from_disp=_greg_to_jalali(approve_from_raw),
+        approve_to_disp=_greg_to_jalali(approve_to_raw),
+        created_from=created_from,
+        created_to=created_to,
+        created_from_disp=_greg_to_jalali(created_from),
+        created_to_disp=_greg_to_jalali(created_to),
+        has_filters=has_filters,
+        form=form_defaults,
         selected_ids=selected_ids,
         page=page,
         pages=pages,
@@ -558,6 +655,7 @@ def campaign_detail(campaign_id: int):
         page=page,
         pages=pages,
         total_logs=total_logs,
+        log_statuses=_LOG_STATUSES,
     )
 
 

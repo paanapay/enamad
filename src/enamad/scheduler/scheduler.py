@@ -62,6 +62,8 @@ class SchedulerConfig:
     run_on_start: bool
     enable_update: bool
     enable_refresh: bool
+    enable_automation_flush: bool
+    automation_flush_cron: str
 
 
 def load_scheduler_config(path: Path) -> SchedulerConfig:
@@ -94,6 +96,8 @@ def load_scheduler_config(path: Path) -> SchedulerConfig:
         run_on_start=get_bool("run_on_start", False),
         enable_update=get_bool("enable_update", True),
         enable_refresh=get_bool("enable_refresh", True),
+        enable_automation_flush=get_bool("enable_automation_flush", True),
+        automation_flush_cron=get("automation_flush_cron", "*/10 * * * *"),
     )
 
 
@@ -142,6 +146,32 @@ def make_refresh_job(cfg: SchedulerConfig, config_path: Path):
     return job
 
 
+def make_automation_flush_job(config_path: Path):
+    """Flush SMS automations that were queued outside their send window."""
+
+    def job() -> None:
+        try:
+            repo_root = SCRIPT_DIR.parents[2]
+            if str(repo_root) not in sys.path:
+                sys.path.insert(0, str(repo_root))
+            if str(repo_root / "src") not in sys.path:
+                sys.path.insert(0, str(repo_root / "src"))
+
+            from db import load_config, mysql_connection
+            from crm_db import ensure_crm_tables
+            from crm_service import process_pending_automations
+
+            cfg = load_config(config_path)
+            with mysql_connection(cfg.mysql) as conn:
+                ensure_crm_tables(conn)
+                n = process_pending_automations(conn)
+            log.info("Automation flush processed %s queued row(s).", n)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Automation flush failed: %s", exc)
+
+    return job
+
+
 def main() -> int:
     argp = argparse.ArgumentParser(description="Enamad recurring task scheduler")
     argp.add_argument("--config", default=str(DEFAULT_CONFIG), help="Path to config.ini")
@@ -150,12 +180,18 @@ def main() -> int:
     config_path = Path(parsed.config)
     if not config_path.is_absolute():
         config_path = SCRIPT_DIR / config_path
+        # Config usually lives at repo root, not next to the package module.
+        if not config_path.is_file():
+            alt = SCRIPT_DIR.parents[2] / parsed.config
+            if alt.is_file():
+                config_path = alt
 
     cfg = load_scheduler_config(config_path)
     scheduler = BlockingScheduler(timezone=cfg.timezone)
 
     update_job = make_update_job(cfg, config_path)
     refresh_job = make_refresh_job(cfg, config_path)
+    automation_flush_job = make_automation_flush_job(config_path)
 
     if cfg.enable_update:
         scheduler.add_job(
@@ -185,12 +221,29 @@ def main() -> int:
             " [newest-first]" if cfg.refresh_newest_first else "",
         )
 
+    if cfg.enable_automation_flush:
+        scheduler.add_job(
+            automation_flush_job,
+            CronTrigger.from_crontab(cfg.automation_flush_cron, timezone=cfg.timezone),
+            id="automation-flush",
+            name="Flush queued automation SMS",
+            max_instances=1,
+            coalesce=True,
+        )
+        log.info(
+            "Scheduled 'automation-flush' with cron '%s' (%s).",
+            cfg.automation_flush_cron,
+            cfg.timezone,
+        )
+
     if not scheduler.get_jobs():
         log.error("No jobs enabled. Set enable_update/enable_refresh in [scheduler].")
         return 1
 
     if cfg.run_on_start:
         log.info("run_on_start enabled — running jobs once now.")
+        if cfg.enable_automation_flush:
+            automation_flush_job()
         if cfg.enable_refresh:
             refresh_job()
         if cfg.enable_update:

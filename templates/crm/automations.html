@@ -12,7 +12,7 @@
 
 <div class="panel" style="padding:0;overflow:auto">
   <table>
-    <thead><tr><th>نام</th><th>رویداد</th><th>کانال</th><th>قالب</th><th>فقط موبایل</th><th>وضعیت</th><th></th></tr></thead>
+    <thead><tr><th>نام</th><th>رویداد</th><th>کانال</th><th>قالب</th><th>فقط موبایل</th><th>ساعت ارسال</th><th>وضعیت</th><th></th></tr></thead>
     <tbody>
       {% for r in rows %}
       <tr>
@@ -21,6 +21,13 @@
         <td>{{ 'پیامک' if r.channel=='sms' else 'ایمیل' }}</td>
         <td>{{ r.template_name }}</td>
         <td>{{ 'بله' if r.mobile_only else 'خیر' }}</td>
+        <td>
+          {% if r.channel == 'sms' and r.sms_window_start is not none and r.sms_window_end is not none %}
+            {{ '%02d'|format(r.sms_window_start) }}:00 تا {{ '%02d'|format(r.sms_window_end) }}:00
+          {% else %}
+            —
+          {% endif %}
+        </td>
         <td><span class="badge {{ 'ok' if r.is_active else 'no' }}">{{ 'فعال' if r.is_active else 'غیرفعال' }}</span></td>
         <td>
           <a href="{{ url_for('crm.automation_form', rule_id=r.id) }}">ویرایش</a>
@@ -30,7 +37,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="empty">قانونی تعریف نشده.</td></tr>
+      <tr><td colspan="8" class="empty">قانونی تعریف نشده.</td></tr>
       {% endfor %}
     </tbody>
   </table>

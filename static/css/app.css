@@ -232,6 +232,44 @@ tbody tr:hover {
   white-space: normal;
 }
 
+.ss-multi .ss-option {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.ss-multi .ss-check {
+  width: 1.1em;
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.selected-summary {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  color: #1e3a8a;
+}
+
+.selected-summary #selected-count {
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1;
+  color: #1d4ed8;
+  font-variant-numeric: tabular-nums;
+}
+
+.selected-summary-label {
+  font-size: 15px;
+  font-weight: 600;
+}
+
 select.ss-native {
   display: none !important;
 }
