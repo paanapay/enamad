@@ -103,7 +103,11 @@ _SAMPLE_CONTEXT = {
 
 
 def _config():
-    from webapp import app_config
+    # Prefer the real Flask module; root webapp.py is only a thin shim.
+    try:
+        from enamad.web.webapp import app_config
+    except ImportError:
+        from webapp import app_config  # type: ignore
 
     return app_config()
 

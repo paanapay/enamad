@@ -80,7 +80,7 @@
         {% endfor %}
       </select>
       <select id="f-category" name="category_ui" multiple data-searchable data-multiple
-              data-ss-class="ss-wide" data-placeholder="دسته‌بندی‌ها (چند انتخابی)…">
+              data-ss-class="ss-wide" data-placeholder="جستجوی دسته‌بندی…">
         {% for c in category_options %}
         <option value="{{ c }}" {{ 'selected' if c in categories }}>{{ c }}</option>
         {% endfor %}

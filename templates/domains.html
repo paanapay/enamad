@@ -48,7 +48,7 @@
 
   <select name="category" multiple data-searchable data-multiple
           title="دسته‌بندی (خدمات / مجوزها)" data-ss-class="ss-wide"
-          data-placeholder="دسته‌بندی‌ها (چند انتخابی)…">
+          data-placeholder="جستجوی دسته‌بندی…">
     {% for c in categories %}
     <option value="{{ c }}" {{ 'selected' if c in selected_categories }}>{{ c }}</option>
     {% endfor %}

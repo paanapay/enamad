@@ -6,7 +6,7 @@
    working; we just mirror its value. Respects option.hidden/disabled so the
    dependent province -> city filtering keeps working.
 
-   Add data-multiple for multi-select (checkbox-style panel). */
+   data-multiple / multiple → Select2-style tags + searchable dropdown. */
 (function () {
   "use strict";
 
@@ -15,11 +15,16 @@
     select.dataset.ssReady = "1";
 
     var multi = select.hasAttribute("multiple") || select.dataset.multiple === "true";
-    if (multi) select.multiple = true;
+    if (multi) {
+      enhanceMulti(select);
+      return;
+    }
+    enhanceSingle(select);
+  }
 
+  function enhanceSingle(select) {
     var wrap = document.createElement("div");
     wrap.className = "ss";
-    if (multi) wrap.classList.add("ss-multi");
     if (select.dataset.ssClass) wrap.className += " " + select.dataset.ssClass;
 
     var input = document.createElement("input");
@@ -42,24 +47,7 @@
     var activeIndex = -1;
     var visibleOptions = [];
 
-    function selectedValues() {
-      return Array.prototype.filter
-        .call(select.options, function (opt) { return opt.selected && opt.value; })
-        .map(function (opt) { return opt.value; });
-    }
-
     function selectedLabel() {
-      if (multi) {
-        var vals = selectedValues();
-        if (!vals.length) return "";
-        if (vals.length === 1) {
-          var only = Array.prototype.find.call(select.options, function (o) {
-            return o.value === vals[0];
-          });
-          return only ? only.text : vals[0];
-        }
-        return vals.length.toLocaleString("fa-IR") + " مورد انتخاب شده";
-      }
       var opt = select.options[select.selectedIndex];
       return opt ? opt.text : "";
     }
@@ -73,29 +61,14 @@
       visibleOptions = [];
       activeIndex = -1;
       var needle = (filter || "").trim().toLowerCase();
-      var chosen = {};
-      selectedValues().forEach(function (v) { chosen[v] = true; });
       Array.prototype.forEach.call(select.options, function (opt) {
         if (opt.hidden || opt.disabled) return;
-        if (!opt.value && multi) return;
         var label = opt.text;
         if (needle && label.toLowerCase().indexOf(needle) === -1) return;
         var item = document.createElement("div");
         item.className = "ss-option";
-        if (chosen[opt.value] || (!multi && opt.value === select.value)) {
-          item.classList.add("selected");
-        }
-        if (multi) {
-          var mark = document.createElement("span");
-          mark.className = "ss-check";
-          mark.textContent = chosen[opt.value] ? "✓" : "";
-          item.appendChild(mark);
-          var text = document.createElement("span");
-          text.textContent = label;
-          item.appendChild(text);
-        } else {
-          item.textContent = label;
-        }
+        if (opt.value === select.value) item.classList.add("selected");
+        item.textContent = label;
         item.dataset.value = opt.value;
         var idx = visibleOptions.length;
         item.addEventListener("mousedown", function (e) {
@@ -130,7 +103,7 @@
 
     function open() {
       if (!panel.hidden) return;
-      render(multi ? input.value : "");
+      render("");
       panel.hidden = false;
       wrap.classList.add("open");
     }
@@ -142,18 +115,6 @@
     }
 
     function commit(value) {
-      if (multi) {
-        Array.prototype.forEach.call(select.options, function (opt) {
-          if (opt.value === value) opt.selected = !opt.selected;
-        });
-        select.dispatchEvent(new Event("change", { bubbles: true }));
-        render(input.value);
-        // Keep panel open for multi; refresh summary placeholder-style label.
-        input.placeholder = selectedLabel() || select.getAttribute("data-placeholder") || "جستجو…";
-        if (!selectedValues().length) syncInput();
-        else input.value = "";
-        return;
-      }
       if (select.value !== value) {
         select.value = value;
         select.dispatchEvent(new Event("change", { bubbles: true }));
@@ -164,11 +125,13 @@
 
     input.addEventListener("focus", function () {
       open();
-      if (!multi) input.select();
+      input.select();
     });
     input.addEventListener("input", function () {
-      if (panel.hidden) panel.hidden = false;
-      wrap.classList.add("open");
+      if (panel.hidden) {
+        panel.hidden = false;
+        wrap.classList.add("open");
+      }
       render(input.value);
     });
     input.addEventListener("keydown", function (e) {
@@ -186,23 +149,238 @@
         }
       } else if (e.key === "Escape") {
         close();
-      } else if (e.key === "Backspace" && multi && !input.value) {
-        var vals = selectedValues();
-        if (vals.length) {
-          commit(vals[vals.length - 1]);
+      }
+    });
+    input.addEventListener("blur", function () {
+      setTimeout(close, 120);
+    });
+
+    select.addEventListener("change", syncInput);
+    syncInput();
+  }
+
+  function enhanceMulti(select) {
+    select.multiple = true;
+
+    var wrap = document.createElement("div");
+    wrap.className = "ss ss-multi";
+    if (select.dataset.ssClass) wrap.className += " " + select.dataset.ssClass;
+
+    var box = document.createElement("div");
+    box.className = "ss-box";
+    box.tabIndex = 0;
+
+    var choices = document.createElement("ul");
+    choices.className = "ss-choices";
+
+    var searchLi = document.createElement("li");
+    searchLi.className = "ss-search";
+
+    var input = document.createElement("input");
+    input.type = "text";
+    input.className = "ss-search-input";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.placeholder = select.getAttribute("data-placeholder") || "جستجو…";
+
+    searchLi.appendChild(input);
+    choices.appendChild(searchLi);
+    box.appendChild(choices);
+
+    var panel = document.createElement("div");
+    panel.className = "ss-panel";
+    panel.hidden = true;
+
+    select.parentNode.insertBefore(wrap, select);
+    wrap.appendChild(box);
+    wrap.appendChild(panel);
+    wrap.appendChild(select);
+    select.classList.add("ss-native");
+
+    var activeIndex = -1;
+    var visibleOptions = [];
+    var closing = false;
+
+    function selectedOptions() {
+      return Array.prototype.filter.call(select.options, function (opt) {
+        return opt.selected && opt.value;
+      });
+    }
+
+    function findOption(value) {
+      return Array.prototype.find.call(select.options, function (opt) {
+        return opt.value === value;
+      });
+    }
+
+    function setSelected(value, on) {
+      var opt = findOption(value);
+      if (!opt) return;
+      opt.selected = !!on;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    function syncTags() {
+      Array.prototype.slice.call(choices.querySelectorAll(".ss-choice")).forEach(function (el) {
+        el.remove();
+      });
+      selectedOptions().forEach(function (opt) {
+        var li = document.createElement("li");
+        li.className = "ss-choice";
+        li.title = opt.text;
+
+        var label = document.createElement("span");
+        label.className = "ss-choice-label";
+        label.textContent = opt.text;
+
+        var remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "ss-choice-remove";
+        remove.setAttribute("aria-label", "حذف");
+        remove.textContent = "×";
+        remove.addEventListener("mousedown", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        });
+        remove.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          setSelected(opt.value, false);
+          syncTags();
+          if (!panel.hidden) render(input.value);
+          input.focus();
+        });
+
+        li.appendChild(label);
+        li.appendChild(remove);
+        choices.insertBefore(li, searchLi);
+      });
+
+      var has = selectedOptions().length > 0;
+      input.placeholder = has ? "" : (select.getAttribute("data-placeholder") || "جستجو…");
+      wrap.classList.toggle("has-value", has);
+    }
+
+    function render(filter) {
+      panel.innerHTML = "";
+      visibleOptions = [];
+      activeIndex = -1;
+      var needle = (filter || "").trim().toLowerCase();
+      var chosen = {};
+      selectedOptions().forEach(function (opt) {
+        chosen[opt.value] = true;
+      });
+
+      Array.prototype.forEach.call(select.options, function (opt) {
+        if (opt.hidden || opt.disabled || !opt.value) return;
+        // Select2-style: already-selected items live as tags, hide from list.
+        if (chosen[opt.value]) return;
+        var label = opt.text;
+        if (needle && label.toLowerCase().indexOf(needle) === -1) return;
+
+        var item = document.createElement("div");
+        item.className = "ss-option";
+        item.textContent = label;
+        item.dataset.value = opt.value;
+        var idx = visibleOptions.length;
+        item.addEventListener("mousedown", function (e) {
+          e.preventDefault();
+          setSelected(opt.value, true);
+          input.value = "";
+          syncTags();
+          render("");
+          input.focus();
+        });
+        item.addEventListener("mousemove", function () {
+          setActive(idx);
+        });
+        panel.appendChild(item);
+        visibleOptions.push(item);
+      });
+
+      if (!visibleOptions.length) {
+        var empty = document.createElement("div");
+        empty.className = "ss-empty";
+        empty.textContent = needle ? "موردی یافت نشد" : "همه موارد انتخاب شده‌اند";
+        panel.appendChild(empty);
+      }
+    }
+
+    function setActive(idx) {
+      if (activeIndex >= 0 && visibleOptions[activeIndex]) {
+        visibleOptions[activeIndex].classList.remove("active");
+      }
+      activeIndex = idx;
+      var el = visibleOptions[activeIndex];
+      if (el) {
+        el.classList.add("active");
+        el.scrollIntoView({ block: "nearest" });
+      }
+    }
+
+    function open() {
+      if (closing) return;
+      render(input.value);
+      panel.hidden = false;
+      wrap.classList.add("open");
+    }
+
+    function close() {
+      panel.hidden = true;
+      wrap.classList.remove("open");
+      input.value = "";
+      activeIndex = -1;
+    }
+
+    box.addEventListener("mousedown", function (e) {
+      if (e.target.closest(".ss-choice-remove")) return;
+      e.preventDefault();
+      input.focus();
+    });
+
+    input.addEventListener("focus", function () {
+      open();
+    });
+    input.addEventListener("input", function () {
+      open();
+      render(input.value);
+    });
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (panel.hidden) open();
+        setActive(Math.min(activeIndex + 1, Math.max(visibleOptions.length - 1, 0)));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setActive(Math.max(activeIndex - 1, 0));
+      } else if (e.key === "Enter") {
+        if (!panel.hidden && activeIndex >= 0 && visibleOptions[activeIndex]) {
+          e.preventDefault();
+          visibleOptions[activeIndex].dispatchEvent(new Event("mousedown"));
+        }
+      } else if (e.key === "Escape") {
+        close();
+        input.blur();
+      } else if (e.key === "Backspace" && !input.value) {
+        var opts = selectedOptions();
+        if (opts.length) {
+          e.preventDefault();
+          setSelected(opts[opts.length - 1].value, false);
+          syncTags();
+          if (!panel.hidden) render("");
         }
       }
     });
     input.addEventListener("blur", function () {
-      // Delay so a click/mousedown on an option runs first.
-      setTimeout(close, 120);
+      closing = true;
+      setTimeout(function () {
+        close();
+        closing = false;
+      }, 150);
     });
 
-    // Keep the input label in sync when the native value changes elsewhere
-    // (e.g. the dependent city filter resetting the selection).
-    select.addEventListener("change", syncInput);
-
-    syncInput();
+    select.addEventListener("change", syncTags);
+    syncTags();
   }
 
   function init() {
